@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware # <--- Necessário para o nav
 from pydantic import BaseModel
 from supabase import create_client, Client
 from fastapi import Header
+import uuid
 
 # 1. Carrega as variáveis
 load_dotenv()
@@ -43,6 +44,109 @@ MAPA_CURSOS = {
     "GAME DEV": "game-dev",
     "STREAMING": "streaming"
 }
+
+# --- MODELOS NOVOS ---
+class NovoAlunoData(BaseModel):
+    nome: str
+    email: str
+    cpf: str
+    senha: str
+    turma_codigo: str # Ex: 'TURMA-GP-01'
+
+class ReposicaoData(BaseModel):
+    id_aluno: int
+    data_hora: str # Formato ISO '2025-12-01T14:00:00'
+    motivo: str
+
+# --- ROTAS ADMINISTRATIVAS ---
+
+@app.post("/admin/cadastrar-aluno")
+def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
+    # 1. Valida se quem está pedindo é um funcionário (Opcional: verificar cargo)
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Não autorizado")
+    
+    try:
+        # 2. Cria o Usuário de Login no Supabase (Auth)
+        # Usamos admin_create_user para não deslogar o professor atual
+        user_auth = supabase.auth.admin.create_user({
+            "email": dados.email,
+            "password": dados.senha,
+            "email_confirm": True # Já confirma o email para ele poder logar
+        })
+        new_user_id = user_auth.user.id
+
+        # 3. Insere na Tabela de Alunos
+        aluno_resp = supabase.table("tb_alunos").insert({
+            "nome_completo": dados.nome,
+            "cpf": dados.cpf,
+            "user_id": new_user_id
+        }).execute()
+        
+        novo_id_aluno = aluno_resp.data[0]['id_aluno']
+
+        # 4. Cria a Matrícula
+        supabase.table("tb_matriculas").insert({
+            "id_aluno": novo_id_aluno,
+            "codigo_turma": dados.turma_codigo,
+            "status_financeiro": "Pago"
+        }).execute()
+
+        return {"message": "Aluno cadastrado com sucesso!"}
+
+    except Exception as e:
+        print(f"Erro Cadastro: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/admin/listar-alunos")
+def admin_listar_alunos():
+    try:
+        # Busca alunos e suas matrículas
+        response = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro)").execute()
+        return response.data
+    except Exception as e:
+        return []
+
+@app.post("/admin/agendar-reposicao")
+def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
+    try:
+        supabase.table("tb_reposicoes").insert({
+            "id_aluno": dados.id_aluno,
+            "data_reposicao": dados.data_hora,
+            "motivo": dados.motivo
+        }).execute()
+        return {"message": "Reposição agendada"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/admin/agenda-geral")
+def admin_agenda():
+    try:
+        # Aqui vamos simular pegando das Turmas e das Reposições para montar o calendário
+        # 1. Pegar Turmas Fixas
+        turmas = supabase.table("tb_turmas").select("*").execute()
+        
+        # 2. Pegar Reposições
+        reposicoes = supabase.table("tb_reposicoes")\
+            .select("data_reposicao, tb_alunos(nome_completo)")\
+            .execute()
+
+        eventos = []
+
+        # Transforma Reposições em Eventos do Calendário
+        for rep in reposicoes.data:
+            eventos.append({
+                "title": f"Reposição: {rep['tb_alunos']['nome_completo']}",
+                "start": rep['data_reposicao'],
+                "color": "#ff4d4d" # Vermelho
+            })
+
+        # Para turmas fixas (simplificado para exemplo)
+        # Em um sistema real, você geraria recorrencia. Aqui vamos devolver as reposições.
+        return eventos
+
+    except Exception as e:
+        return []
 
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
@@ -115,5 +219,6 @@ def realizar_login(dados: LoginData):
     except Exception as e:
         print(f"Erro no login: {e}") # Ajuda a ver o erro no terminal
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
+
 
 
