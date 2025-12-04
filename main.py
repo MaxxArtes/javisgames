@@ -47,45 +47,46 @@ MAPA_CURSOS = {
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
     if not authorization:
-        raise HTTPException(status_code=401, detail="Token não fornecido")
+        raise HTTPException(status_code=401, detail="Token ausente")
 
     try:
-        # 1. Pegar o usuário logado usando o token que veio do Front
-        token = authorization.split(" ")[1] # Remove o "Bearer "
-        user_response = supabase.auth.get_user(token)
-        user_id = user_response.user.id
+        # 1. Pega usuário
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
 
-        # 2. Descobrir o ID do Aluno na tabela tb_alunos
-        aluno_data = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        # 2. Pega ID do Aluno
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
         
-        if not aluno_data.data:
-            return {"cursos": []} # Usuário não é aluno ainda
-            
-        id_aluno = aluno_data.data[0]['id_aluno']
+        if not aluno_resp.data:
+            return {"cursos": []}
 
-        # 3. Buscar as matrículas e descobrir os nomes dos cursos
-        # Consultamos tb_matriculas e pedimos os dados da tb_turmas relacionada
+        id_aluno = aluno_resp.data[0]['id_aluno']
+
+        # 3. Busca matrículas e INCLUI A DATA (data_matricula)
         response = supabase.table("tb_matriculas")\
-            .select("tb_turmas(nome_curso)")\
+            .select("codigo_turma, data_matricula, tb_turmas(nome_curso)")\
             .eq("id_aluno", id_aluno)\
             .execute()
 
-        # 4. Processar a lista para devolver os IDs do HTML
-        cursos_liberados = []
+        # 4. Monta a lista com ID e DATA
+        liberados = []
         for item in response.data:
-            # O Supabase retorna algo como {'tb_turmas': {'nome_curso': 'Game Pro'}}
             if item.get('tb_turmas'):
-                nome_db = item['tb_turmas']['nome_curso']
-                # Transforma 'Game Pro' em 'game-pro' usando nosso mapa
-                if nome_db in MAPA_CURSOS:
-                    cursos_liberados.append(MAPA_CURSOS[nome_db])
-
-        return {"cursos": cursos_liberados}
+                nome_banco = item['tb_turmas']['nome_curso']
+                
+                if nome_banco in MAPA_CURSOS:
+                    liberados.append({
+                        "id": MAPA_CURSOS[nome_banco],       # Ex: 'game-pro'
+                        "data_inicio": item['data_matricula'] # Ex: '2025-12-04'
+                    })
+        
+        return {"cursos": liberados}
 
     except Exception as e:
-        print(f"Erro ao buscar cursos: {e}")
-        return {"cursos": []} # Em caso de erro, não libera nada por segurança
-
+        print(f"Erro Permissões: {e}")
+        return {"cursos": []}
+        
 @app.post("/recuperar-senha")
 def recuperar_senha(dados: EmailData):
     try:
@@ -114,4 +115,5 @@ def realizar_login(dados: LoginData):
     except Exception as e:
         print(f"Erro no login: {e}") # Ajuda a ver o erro no terminal
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
+
 
