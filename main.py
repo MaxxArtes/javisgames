@@ -60,6 +60,42 @@ class ReposicaoData(BaseModel):
 
 # --- ROTAS ADMINISTRATIVAS ---
 
+@app.get("/admin/meus-dados")
+def get_dados_funcionario(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token ausente")
+
+    try:
+        # 1. Pega o ID do usuário logado (do Supabase Auth)
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+
+        # 2. Busca na tabela tb_colaboradores E tb_cargos
+        # O select usa a sintaxe de join do Supabase: tb_cargos(nome_cargo, nivel_acesso)
+        response = supabase.table("tb_colaboradores")\
+            .select("nome_completo, id_cargo, tb_cargos(nome_cargo, nivel_acesso)")\
+            .eq("user_id", user_id)\
+            .eq("ativo", True)\
+            .execute()
+
+        # 3. Se não achar ninguém ou não estiver ativo
+        if not response.data:
+            raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
+
+        funcionario = response.data[0]
+        
+        # Retorna os dados organizados
+        return {
+            "nome": funcionario['nome_completo'],
+            "cargo": funcionario['tb_cargos']['nome_cargo'],
+            "nivel": funcionario['tb_cargos']['nivel_acesso']
+        }
+
+    except Exception as e:
+        print(f"Erro Auth Funcionario: {e}")
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
 @app.post("/admin/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
     # 1. Valida se quem está pedindo é um funcionário (Opcional: verificar cargo)
@@ -219,6 +255,7 @@ def realizar_login(dados: LoginData):
     except Exception as e:
         print(f"Erro no login: {e}") # Ajuda a ver o erro no terminal
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
+
 
 
 
