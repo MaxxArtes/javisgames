@@ -39,10 +39,8 @@ class EmailData(BaseModel):
 @app.post("/recuperar-senha")
 def recuperar_senha(dados: EmailData):
     try:
-        # URL para onde o usuário volta ao clicar no email
-        # ATENÇÃO: Se estiver testando local, use http://127.0.0.1:5500/RedefinirSenha.html
-        # Quando subir o site frontend, troque pela URL real do site
-        site_url = "http://127.0.0.1:5500/RedefinirSenha.html" 
+        # ATUALIZADO: Agora aponta para o seu domínio real
+        site_url = "https://www.javisgameacademy.com.br/RedefinirSenha.html" 
         
         supabase.auth.reset_password_email(dados.email, options={
             "redirect_to": site_url
@@ -51,7 +49,7 @@ def recuperar_senha(dados: EmailData):
         return {"message": "Email de recuperação enviado com sucesso"}
     except Exception as e:
         print(f"Erro recuperação: {e}")
-        raise HTTPException(status_code=400, detail="Erro ao enviar email. Verifique se o endereço está correto.")
+        raise HTTPException(status_code=400, detail="Erro ao enviar email.")
 
 @app.post("/login")
 def realizar_login(dados: LoginData):
