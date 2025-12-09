@@ -1,20 +1,20 @@
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.middleware.cors import CORSMiddleware # <--- Necessário para o navegador deixar conectar
+from fastapi.middleware.cors import CORSMiddleware 
 from pydantic import BaseModel
 from supabase import create_client, Client
-import uuid
+import requests  # <--- Biblioteca necessária para o CallMeBot
 
-# 1. Carrega as variáveis
+# 1. Carrega as variáveis de ambiente
 load_dotenv()
 
 app = FastAPI()
 
-# 2. Configura o CORS (Permite que seu HTML fale com o Python)
+# 2. Configura o CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Em produção, troque "*" pelo seu domínio ex: "https://meusite.com"
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,7 +56,7 @@ class ReposicaoData(BaseModel):
     data_hora: str 
     motivo: str
 
-# --- [NOVO] MODELO PARA INSCRIÇÃO DA AULA ---
+# --- MODELO PARA INSCRIÇÃO DA AULA (WHATSAPP) ---
 class InscricaoAulaData(BaseModel):
     nome: str
     email: str
@@ -65,7 +65,7 @@ class InscricaoAulaData(BaseModel):
     cidade: str
     aceitou_termos: bool
 
-# --- ROTAS ADMINISTRATIVAS ---
+# --- ROTAS ADMINISTRATIVAS & ALUNO ---
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
@@ -239,14 +239,15 @@ def realizar_login(dados: LoginData):
         print(f"Erro no login: {e}") 
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
 
-# --- [NOVO] INTEGRAÇÃO WHATSAPP ---
+# --- INTEGRAÇÃO WHATSAPP (CALLMEBOT) ---
 
 def enviar_whatsapp_api(dados: InscricaoAulaData):
-    # O número que receberá o aviso (O Javis)
-    numero_destino = "5565992532020"
+    # DADOS REAIS QUE VOCÊ FORNECEU
+    phone_number = "556581350686"
+    apikey = "4578856"
     
-    # Monta a mensagem com os dados que vieram do formulário
-    mensagem_formatada = (
+    # Formata a mensagem com emojis
+    mensagem = (
         f"🎮 *NOVA INSCRIÇÃO - AULA EXPERIMENTAL*\n\n"
         f"👤 *Nome:* {dados.nome}\n"
         f"📧 *Email:* {dados.email}\n"
@@ -255,23 +256,31 @@ def enviar_whatsapp_api(dados: InscricaoAulaData):
         f"🏙 *Cidade:* {dados.cidade}\n"
         f"✅ *Termos:* {'Aceito' if dados.aceitou_termos else 'Não'}"
     )
-
-    print(f"--- PROCESSANDO ENVIO PARA {numero_destino} ---")
-    print(mensagem_formatada)
     
-    # --- [ESPAÇO PARA A SUA API DE WHATSAPP] ---
-    # Aqui você vai colar o código da API do App que você está construindo.
-    # Exemplo: requests.post("URL_DA_SUA_API", json={"number": numero_destino, "text": mensagem_formatada})
+    # URL da API Gratuita
+    url = f"https://api.callmebot.com/whatsapp.php"
     
-    return True
+    try:
+        print(f"--- Enviando notificação para {phone_number} ---")
+        # Envia a requisição para o bot
+        requests.get(url, params={"phone": phone_number, "text": mensagem, "apikey": apikey})
+        return True
+            
+    except Exception as e:
+        print(f"Erro de conexão no envio: {e}")
+        # Retorna False mas não trava o sistema
+        return False
 
 @app.post("/inscrever-aula")
 def inscrever_aula(dados: InscricaoAulaData):
     try:
-        # Chama a função que criamos acima passando os dados recebidos
+        # 1. Dispara o WhatsApp
         enviar_whatsapp_api(dados)
         
-        return {"message": "Inscrição recebida! Processando envio."}
+        # 2. Retorna sucesso para o site
+        return {"message": "Inscrição recebida com sucesso!"}
+            
     except Exception as e:
-        print(f"Erro no processamento: {e}")
-        raise HTTPException(status_code=500, detail="Erro interno ao processar inscrição")
+        print(f"Erro crítico: {e}")
+        # Retorna erro 500 se algo muito grave acontecer
+        raise HTTPException(status_code=500, detail="Erro interno")
