@@ -284,3 +284,41 @@ def inscrever_aula(dados: InscricaoAulaData):
         print(f"Erro crítico: {e}")
         # Retorna erro 500 se algo muito grave acontecer
         raise HTTPException(status_code=500, detail="Erro interno")
+
+# Modelo de dados que o App vai mandar
+class MensagemChat(BaseModel):
+    telefone: str # Número do aluno (destino)
+    texto: str    # O que o funcionário digitou
+
+@app.post("/chat/enviar")
+def enviar_mensagem_chat(dados: MensagemChat):
+    print(f"--- APP: Enviando msg para {dados.telefone} ---")
+    
+    # AQUI CONFIGURAMOS O ENVIO
+    # Como o CallMeBot Grátis só manda para o SEU número cadastrado,
+    # vamos usar o seu número como destino para testar a integração.
+    
+    meu_numero_admin = "5565992532020" # Seu número que tem a API Key
+    minha_apikey = "4578856"
+    
+    # Montamos um aviso para você saber que funcionou
+    texto_formatado = (
+        f"📱 *Simulação de Envio para Aluno*\n"
+        f"Para: {dados.telefone}\n"
+        f"Msg: {dados.texto}"
+    )
+    
+    url = "https://api.callmebot.com/whatsapp.php"
+    
+    try:
+        # Envia a requisição
+        requests.get(url, params={
+            "phone": meu_numero_admin, 
+            "text": texto_formatado, 
+            "apikey": minha_apikey
+        })
+        return {"message": "Enviado com sucesso (Modo Teste)"}
+    except Exception as e:
+        print(f"Erro chat: {e}")
+        raise HTTPException(status_code=500, detail="Erro no envio")
+
