@@ -35,6 +35,14 @@ ZAPI_TOKEN = "9C37DABF607A4D31B7D53FA6"
 ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
 
 # --- MODELOS DE DADOS ---
+# MODELOS PARA O CHAT
+class ChatMensagemData(BaseModel):
+    mensagem: str
+
+class ChatAdminReply(BaseModel):
+    id_aluno: int
+    mensagem: str
+    
 class LoginData(BaseModel):
     email: str
     password: str
@@ -320,3 +328,81 @@ def enviar_mensagem_chat(dados: MensagemChat):
         return {"message": "Enviado com sucesso via Z-API"}
     else:
         raise HTTPException(status_code=500, detail="Erro ao enviar mensagem no WhatsApp")
+
+# --- ROTAS DE SUPORTE (CHAT INTERNO) ---
+
+# 1. Aluno envia mensagem ou busca histórico
+@app.get("/chat/historico")
+def get_historico_aluno(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    
+    # Pega ID do aluno pelo Token
+    token = authorization.split(" ")[1]
+    user = supabase.auth.get_user(token)
+    aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user.user.id).execute()
+    
+    if not aluno_resp.data: return []
+    id_aluno = aluno_resp.data[0]['id_aluno']
+
+    # Busca mensagens
+    msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
+    return msgs.data
+
+@app.post("/chat/enviar-aluno")
+def enviar_msg_aluno(dados: ChatMensagemData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    user = supabase.auth.get_user(token)
+    aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user.user.id).execute()
+    
+    if not aluno_resp.data: raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    id_aluno = aluno_resp.data[0]['id_aluno']
+
+    supabase.table("tb_chat").insert({
+        "id_aluno": id_aluno,
+        "mensagem": dados.mensagem,
+        "enviado_por_admin": False
+    }).execute()
+    
+    return {"message": "Enviado"}
+
+# 2. Admin (Funcionário) lista conversas e responde
+
+@app.get("/admin/chat/conversas-ativas")
+def admin_listar_conversas_ativas():
+    # Retorna lista de alunos que mandaram mensagem recentemente (Distinct)
+    # Nota: Em SQL puro seria mais fácil fazer um DISTINCT ON, aqui faremos via lógica simples
+    try:
+        # Pega todas as mensagens e agrupa no python (para simplificar sem criar views complexas agora)
+        msgs = supabase.table("tb_chat").select("id_aluno, mensagem, created_at, tb_alunos(nome_completo)").order("created_at", desc=True).limit(200).execute()
+        
+        conversas = {}
+        for m in msgs.data:
+            aid = m['id_aluno']
+            if aid not in conversas:
+                conversas[aid] = {
+                    "id_aluno": aid,
+                    "nome": m['tb_alunos']['nome_completo'],
+                    "ultima_msg": m['mensagem'],
+                    "data": m['created_at']
+                }
+        return list(conversas.values())
+    except Exception as e:
+        print(e)
+        return []
+
+@app.get("/admin/chat/mensagens/{id_aluno}")
+def admin_ler_mensagens(id_aluno: int):
+    msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
+    return msgs.data
+
+@app.post("/admin/chat/responder")
+def admin_responder(dados: ChatAdminReply):
+    supabase.table("tb_chat").insert({
+        "id_aluno": dados.id_aluno,
+        "mensagem": dados.mensagem,
+        "enviado_por_admin": True
+    }).execute()
+    return {"message": "Respondido"}
+
