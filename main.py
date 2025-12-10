@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware 
 from pydantic import BaseModel
 from supabase import create_client, Client
-import requests  # <--- Biblioteca necessária para o CallMeBot
+import requests # Essencial para conectar na Z-API
 
 # 1. Carrega as variáveis de ambiente
 load_dotenv()
@@ -29,7 +29,12 @@ if not url or not key:
 
 supabase: Client = create_client(url, key)
 
-# --- MODELOS DE DADOS EXISTENTES ---
+# --- CREDENCIAIS Z-API (JÁ CONFIGURADAS) ---
+ZAPI_INSTANCE_ID = "3EB841CFDDB82238F05676920E0B7E08"
+ZAPI_TOKEN = "9C37DABF607A4D31B7D53FA6"
+ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
+
+# --- MODELOS DE DADOS ---
 class LoginData(BaseModel):
     email: str
     password: str
@@ -56,7 +61,7 @@ class ReposicaoData(BaseModel):
     data_hora: str 
     motivo: str
 
-# --- MODELO PARA INSCRIÇÃO DA AULA (WHATSAPP) ---
+# Modelo para inscrição da aula (Site -> Whatsapp)
 class InscricaoAulaData(BaseModel):
     nome: str
     email: str
@@ -65,7 +70,40 @@ class InscricaoAulaData(BaseModel):
     cidade: str
     aceitou_termos: bool
 
-# --- ROTAS ADMINISTRATIVAS & ALUNO ---
+# Modelo para chat (App -> Whatsapp do Aluno)
+class MensagemChat(BaseModel):
+    telefone: str # Número do aluno (destino)
+    texto: str    # O que o funcionário digitou
+
+# --- FUNÇÃO AUXILIAR DE ENVIO (Z-API) ---
+def enviar_mensagem_zapi(telefone_destino: str, mensagem_texto: str):
+    """
+    Função centralizada para enviar mensagens via Z-API.
+    """
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "phone": telefone_destino, 
+        "message": mensagem_texto
+    }
+
+    try:
+        response = requests.post(ZAPI_BASE_URL, json=payload, headers=headers)
+        
+        if response.status_code == 200:
+            print(f"✅ Z-API Sucesso para {telefone_destino}")
+            return True
+        else:
+            print(f"❌ Z-API Erro ({response.status_code}): {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Erro de conexão Z-API: {e}")
+        return False
+
+# --- ROTAS DO SISTEMA ---
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
@@ -203,7 +241,7 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                 
                 if nome_banco in MAPA_CURSOS:
                     liberados.append({
-                        "id": MAPA_CURSOS[nome_banco],      
+                        "id": MAPA_CURSOS[nome_banco],       
                         "data_inicio": item['data_matricula'] 
                     })
         
@@ -239,86 +277,46 @@ def realizar_login(dados: LoginData):
         print(f"Erro no login: {e}") 
         raise HTTPException(status_code=400, detail="Email ou senha incorretos")
 
-# --- INTEGRAÇÃO WHATSAPP (CALLMEBOT) ---
-
-def enviar_whatsapp_api(dados: InscricaoAulaData):
-    # DADOS REAIS QUE VOCÊ FORNECEU
-    phone_number = "556581350686"
-    apikey = "4578856"
-    
-    # Formata a mensagem com emojis
-    mensagem = (
-        f"🎮 *NOVA INSCRIÇÃO - AULA EXPERIMENTAL*\n\n"
-        f"👤 *Nome:* {dados.nome}\n"
-        f"📧 *Email:* {dados.email}\n"
-        f"📱 *Whatsapp:* {dados.telefone}\n"
-        f"🎂 *Nasc:* {dados.nascimento}\n"
-        f"🏙 *Cidade:* {dados.cidade}\n"
-        f"✅ *Termos:* {'Aceito' if dados.aceitou_termos else 'Não'}"
-    )
-    
-    # URL da API Gratuita
-    url = f"https://api.callmebot.com/whatsapp.php"
-    
-    try:
-        print(f"--- Enviando notificação para {phone_number} ---")
-        # Envia a requisição para o bot
-        requests.get(url, params={"phone": phone_number, "text": mensagem, "apikey": apikey})
-        return True
-            
-    except Exception as e:
-        print(f"Erro de conexão no envio: {e}")
-        # Retorna False mas não trava o sistema
-        return False
+# --- INTEGRAÇÃO Z-API (NOTIFICAÇÃO DE AULA) ---
 
 @app.post("/inscrever-aula")
 def inscrever_aula(dados: InscricaoAulaData):
     try:
-        # 1. Dispara o WhatsApp
-        enviar_whatsapp_api(dados)
+        # SEU NÚMERO PARA RECEBER O AVISO
+        numero_admin = "5565981350686"
         
-        # 2. Retorna sucesso para o site
+        # Formata a mensagem com emojis
+        mensagem = (
+            f"🎮 *NOVA INSCRIÇÃO - AULA EXPERIMENTAL*\n\n"
+            f"👤 *Nome:* {dados.nome}\n"
+            f"📧 *Email:* {dados.email}\n"
+            f"📱 *Whatsapp:* {dados.telefone}\n"
+            f"🎂 *Nasc:* {dados.nascimento}\n"
+            f"🏙 *Cidade:* {dados.cidade}\n"
+            f"✅ *Termos:* {'Aceito' if dados.aceitou_termos else 'Não'}"
+        )
+        
+        # Envia via Z-API
+        enviar_mensagem_zapi(numero_admin, mensagem)
+        
         return {"message": "Inscrição recebida com sucesso!"}
             
     except Exception as e:
         print(f"Erro crítico: {e}")
-        # Retorna erro 500 se algo muito grave acontecer
         raise HTTPException(status_code=500, detail="Erro interno")
 
-# Modelo de dados que o App vai mandar
-class MensagemChat(BaseModel):
-    telefone: str # Número do aluno (destino)
-    texto: str    # O que o funcionário digitou
+# --- INTEGRAÇÃO Z-API (CHAT DO SISTEMA) ---
 
 @app.post("/chat/enviar")
 def enviar_mensagem_chat(dados: MensagemChat):
+    """
+    Envia mensagem para o aluno diretamente pelo WhatsApp da empresa
+    """
     print(f"--- APP: Enviando msg para {dados.telefone} ---")
     
-    # AQUI CONFIGURAMOS O ENVIO
-    # Como o CallMeBot Grátis só manda para o SEU número cadastrado,
-    # vamos usar o seu número como destino para testar a integração.
+    sucesso = enviar_mensagem_zapi(dados.telefone, dados.texto)
     
-    meu_numero_admin = "5565992532020" # Seu número que tem a API Key
-    minha_apikey = "4578856"
-    
-    # Montamos um aviso para você saber que funcionou
-    texto_formatado = (
-        f"📱 *Simulação de Envio para Aluno*\n"
-        f"Para: {dados.telefone}\n"
-        f"Msg: {dados.texto}"
-    )
-    
-    url = "https://api.callmebot.com/whatsapp.php"
-    
-    try:
-        # Envia a requisição
-        requests.get(url, params={
-            "phone": meu_numero_admin, 
-            "text": texto_formatado, 
-            "apikey": minha_apikey
-        })
-        return {"message": "Enviado com sucesso (Modo Teste)"}
-    except Exception as e:
-        print(f"Erro chat: {e}")
-        raise HTTPException(status_code=500, detail="Erro no envio")
-
+    if sucesso:
+        return {"message": "Enviado com sucesso via Z-API"}
+    else:
+        raise HTTPException(status_code=500, detail="Erro ao enviar mensagem no WhatsApp")
