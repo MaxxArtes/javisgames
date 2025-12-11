@@ -260,10 +260,70 @@ def enviar_msg_aluno(dados: ChatMensagemData, authorization: str = Header(None))
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/chat/conversas-ativas")
-def admin_listar_conversas_ativas():
+def admin_listar_conversas_ativas(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token ausente")
+
     try:
-        msgs = supabase.table("tb_chat").select("id_aluno, mensagem, created_at, tb_alunos(nome_completo)")\
-            .order("created_at", desc=True).limit(300).execute()
+        # 1. Identificar quem está logado
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+
+        # 2. Buscar dados do colaborador e seu nível de acesso
+        colab_resp = supabase.table("tb_colaboradores")\
+            .select("id_colaborador, id_cargo, tb_cargos(nivel_acesso)")\
+            .eq("user_id", user_id)\
+            .execute()
+
+        if not colab_resp.data:
+            raise HTTPException(status_code=403, detail="Colaborador não encontrado")
+
+        colaborador = colab_resp.data[0]
+        meu_id_colaborador = colaborador['id_colaborador']
+        nivel_acesso = colaborador['tb_cargos']['nivel_acesso']
+
+        # 3. Lógica de Filtragem
+        lista_alunos_permitidos = []
+        filtrar_por_aluno = False
+
+        # Se for Professor ou Nível baixo (< 8), filtra os alunos
+        if nivel_acesso < 8:
+            filtrar_por_aluno = True
+            
+            # A) Busca as turmas que este professor dá aula
+            turmas_resp = supabase.table("tb_turmas")\
+                .select("codigo_turma")\
+                .eq("id_professor", meu_id_colaborador)\
+                .execute()
+            
+            codigos_turmas = [t['codigo_turma'] for t in turmas_resp.data]
+
+            if not codigos_turmas:
+                return [] # Professor sem turmas não vê ninguém
+
+            # B) Busca os alunos matriculados nessas turmas
+            matriculas_resp = supabase.table("tb_matriculas")\
+                .select("id_aluno")\
+                .in_("codigo_turma", codigos_turmas)\
+                .execute()
+            
+            lista_alunos_permitidos = [m['id_aluno'] for m in matriculas_resp.data]
+            
+            if not lista_alunos_permitidos:
+                return [] # Nenhum aluno nas turmas
+
+        # 4. Buscar as mensagens (Filtrando ou Pegando Tudo)
+        query = supabase.table("tb_chat").select("id_aluno, mensagem, created_at, tb_alunos(nome_completo)")\
+            .order("created_at", desc=True).limit(300)
+        
+        # Aplica o filtro se não for admin
+        if filtrar_por_aluno:
+            query = query.in_("id_aluno", lista_alunos_permitidos)
+            
+        msgs = query.execute()
+        
+        # 5. Agrupar conversas (Lógica de visualização)
         conversas = {}
         for m in msgs.data:
             aid = m['id_aluno']
@@ -274,8 +334,12 @@ def admin_listar_conversas_ativas():
                     "ultima_msg": m['mensagem'],
                     "data": m['created_at']
                 }
+        
         return list(conversas.values())
-    except: return []
+
+    except Exception as e:
+        print(f"Erro ao listar conversas: {e}")
+        return []
 
 @app.get("/admin/chat/mensagens/{id_aluno}")
 def admin_ler_mensagens(id_aluno: int):
@@ -293,3 +357,4 @@ def admin_responder(dados: ChatAdminReply):
         return {"message": "Respondido"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
