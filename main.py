@@ -34,6 +34,14 @@ ZAPI_INSTANCE_ID = "3EB841CFDDB82238F05676920E0B7E08"
 ZAPI_TOKEN = "9C37DABF607A4D31B7D53FA6"
 ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
 
+# --- ADICIONE ESTE MODELO NO INÍCIO JUNTO COM OS OUTROS ---
+class PerfilUpdateData(BaseModel):
+    nome: str | None = None
+    telefone: str | None = None
+    email_contato: str | None = None
+    email_login: str | None = None
+    nova_senha: str | None = None
+
 # --- MODELOS DE DADOS ---
 class LoginData(BaseModel):
     email: str
@@ -98,27 +106,26 @@ def enviar_mensagem_zapi(telefone_destino: str, mensagem_texto: str):
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Token ausente")
+    # ... (código de verificação do token igual) ...
     try:
-        token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        user_id = user.user.id
+        # ... (busca usuario) ...
         
-        # --- CORREÇÃO AQUI: Usando !fk_cargos para especificar a relação exata ---
+        # MUDANÇA AQUI: Adicione 'telefone, email' e 'id_colaborador' no select
         response = supabase.table("tb_colaboradores")\
-            .select("nome_completo, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
+            .select("id_colaborador, nome_completo, telefone, email, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
             .eq("user_id", user_id)\
             .eq("ativo", True)\
             .execute()
             
-        if not response.data:
-            raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
+        # ... (verificação se existe) ...
         
         funcionario = response.data[0]
         
         return {
+            "id_colaborador": funcionario['id_colaborador'], # NOVO
             "nome": funcionario['nome_completo'],
+            "telefone": funcionario['telefone'], # NOVO
+            "email_contato": funcionario['email'], # NOVO
             "cargo": funcionario['tb_cargos']['nome_cargo'],
             "nivel": funcionario['tb_cargos']['nivel_acesso']
         }
@@ -433,4 +440,42 @@ def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorizat
         return {"message": "Status atualizado", "vendedor": nome_vendedor}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+@app.patch("/admin/meus-dados")
+def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+
+        # 1. Atualizar Tabela Pública (tb_colaboradores)
+        updates_tabela = {}
+        if dados.nome:
+            updates_tabela["nome_completo"] = dados.nome.upper() # Força Maiúsculo
+        if dados.telefone:
+            updates_tabela["telefone"] = dados.telefone
+        if dados.email_contato:
+            updates_tabela["email"] = dados.email_contato
+            
+        if updates_tabela:
+            supabase.table("tb_colaboradores").update(updates_tabela).eq("user_id", user_id).execute()
+
+        # 2. Atualizar Autenticação (Login / Senha)
+        # Nota: Alterar email de login geralmente envia um email de confirmação pelo Supabase
+        updates_auth = {}
+        if dados.email_login:
+            updates_auth["email"] = dados.email_login
+        if dados.nova_senha and len(dados.nova_senha) >= 6:
+            updates_auth["password"] = dados.nova_senha
+            
+        if updates_auth:
+            supabase.auth.update_user(updates_auth)
+
+        return {"message": "Perfil atualizado com sucesso!"}
+
+    except Exception as e:
+        print(f"Erro ao atualizar perfil: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao atualizar dados.")
+
 
