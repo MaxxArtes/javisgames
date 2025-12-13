@@ -368,12 +368,17 @@ def admin_responder(dados: ChatAdminReply):
 @app.get("/admin/leads-crm")
 def get_leads_crm(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    
     try:
+        # Debug 1: Confirmar token
+        print("Iniciando busca CRM...")
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         
-        # Busca inscrições
+        # Debug 2: Ver o que o Supabase retorna
         resp_insc = supabase.table("inscricoes").select("*").order("created_at", desc=True).execute()
+        print(f"Inscrições encontradas: {len(resp_insc.data)}") # Vai aparecer no log do Render
+        
         leads = resp_insc.data
 
         # Busca CPFs dos alunos para comparação
@@ -428,3 +433,4 @@ def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorizat
         return {"message": "Status atualizado", "vendedor": nome_vendedor}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
