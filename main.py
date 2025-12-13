@@ -56,6 +56,9 @@ class NovoAlunoData(BaseModel):
     cpf: str
     senha: str
     turma_codigo: str 
+    celular: str  # Obrigatório para contato
+    telefone: str | None = None # Opcional
+    data_nascimento: str | None = None # Vem do HTML como YYYY-MM-DD
 
 class ReposicaoData(BaseModel):
     id_aluno: int
@@ -140,26 +143,59 @@ def get_dados_funcionario(authorization: str = Header(None)):
 @app.post("/admin/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    
     try:
+        # 1. Identificar quem está cadastrando (o Vendedor)
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id_logado = user.user.id
+        
+        resp_colab = supabase.table("tb_colaboradores").select("id_colaborador").eq("user_id", user_id_logado).execute()
+        id_vendedor_atual = resp_colab.data[0]['id_colaborador'] if resp_colab.data else None
+
+        # 2. Criar usuário no Auth do Supabase (Login)
         user_auth = supabase.auth.admin.create_user({
             "email": dados.email,
             "password": dados.senha,
             "email_confirm": True 
         })
         new_user_id = user_auth.user.id
+
+        # 3. Formatar data de nascimento para 8 caracteres (YYYYMMDD) se houver
+        nasc_formatado = None
+        if dados.data_nascimento:
+            nasc_formatado = dados.data_nascimento.replace("-", "")[:8]
+
+        # 4. Inserir na tabela de Alunos (Dados Completos)
         aluno_resp = supabase.table("tb_alunos").insert({
             "nome_completo": dados.nome,
             "cpf": dados.cpf,
+            "email": dados.email, # Se tiver coluna email na tb_alunos, senão remova essa linha
+            "celular": dados.celular,
+            "telefone": dados.telefone,
+            "data_nascimento": nasc_formatado,
             "user_id": new_user_id
         }).execute()
+        
+        if not aluno_resp.data:
+            raise Exception("Erro ao inserir dados do aluno")
+
         novo_id_aluno = aluno_resp.data[0]['id_aluno']
+
+        # 5. Inserir na tabela de Matrículas (Com Vendedor)
         supabase.table("tb_matriculas").insert({
             "id_aluno": novo_id_aluno,
             "codigo_turma": dados.turma_codigo,
-            "status_financeiro": "Pago"
+            "id_vendedor": id_vendedor_atual, # Grava quem vendeu
+            "status_financeiro": "Ok"
         }).execute()
+
         return {"message": "Aluno cadastrado com sucesso!"}
+
     except Exception as e:
+        print(f"Erro cadastro: {e}")
+        # Se der erro, tenta limpar o usuário criado no Auth para não ficar "morto"
+        # (Opcional, mas boa prática)
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/admin/listar-alunos")
@@ -481,6 +517,7 @@ def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(No
     except Exception as e:
         print(f"Erro ao atualizar perfil: {e}")
         raise HTTPException(status_code=500, detail="Erro interno ao atualizar dados.")
+
 
 
 
