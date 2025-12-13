@@ -106,26 +106,30 @@ def enviar_mensagem_zapi(telefone_destino: str, mensagem_texto: str):
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
-    # ... (código de verificação do token igual) ...
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token ausente")
     try:
-        # ... (busca usuario) ...
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
         
-        # MUDANÇA AQUI: Adicione 'telefone, email' e 'id_colaborador' no select
+        # --- BUSCA COM CAMPOS EXTRAS ---
         response = supabase.table("tb_colaboradores")\
             .select("id_colaborador, nome_completo, telefone, email, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
             .eq("user_id", user_id)\
             .eq("ativo", True)\
             .execute()
             
-        # ... (verificação se existe) ...
+        if not response.data:
+            raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
         
         funcionario = response.data[0]
         
         return {
-            "id_colaborador": funcionario['id_colaborador'], # NOVO
+            "id_colaborador": funcionario['id_colaborador'], # IMPORTANTE
             "nome": funcionario['nome_completo'],
-            "telefone": funcionario['telefone'], # NOVO
-            "email_contato": funcionario['email'], # NOVO
+            "telefone": funcionario['telefone'], # IMPORTANTE
+            "email_contato": funcionario['email'], # IMPORTANTE
             "cargo": funcionario['tb_cargos']['nome_cargo'],
             "nivel": funcionario['tb_cargos']['nivel_acesso']
         }
@@ -477,5 +481,6 @@ def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(No
     except Exception as e:
         print(f"Erro ao atualizar perfil: {e}")
         raise HTTPException(status_code=500, detail="Erro interno ao atualizar dados.")
+
 
 
