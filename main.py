@@ -66,102 +66,15 @@ class MensagemChat(BaseModel):
     telefone: str 
     texto: str    
 
-# NOVO: Modelos para o Chat Interno
 class ChatMensagemData(BaseModel):
     mensagem: str
 
 class ChatAdminReply(BaseModel):
     id_aluno: int
     mensagem: str
-    
-# --- NOVAS ROTAS PARA O CRM (Inscrições) ---
 
 class StatusUpdateData(BaseModel):
     status: str
-
-@app.get("/admin/leads-crm")
-def get_leads_crm(authorization: str = Header(None)):
-    """
-    Retorna a lista de inscrições já processada, dizendo quem é aluno e quem não é.
-    Segurança: Apenas níveis autorizados podem ver.
-    """
-    if not authorization: raise HTTPException(status_code=401)
-    
-    try:
-        # 1. Verifica quem está pedindo
-        token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        user_id = user.user.id
-        
-        # Verifica permissão (opcional: checar nível de acesso aqui)
-        # ...
-
-        # 2. Busca Inscrições
-        resp_insc = supabase.table("inscricoes").select("*").order("created_at", desc=True).execute()
-        leads = resp_insc.data
-
-        # 3. Busca APENAS os CPFs dos alunos para comparar (Leve e Rápido)
-        resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
-        # Cria uma lista limpa de CPFs (apenas números) para busca rápida
-        cpfs_alunos = set()
-        for a in resp_alunos.data:
-            if a.get('cpf'):
-                cpfs_alunos.add( ''.join(filter(str.isdigit, a['cpf'])) )
-
-        # 4. Processa os dados aqui no Servidor (Python)
-        resultado = []
-        for lead in leads:
-            cpf_lead_limpo = ''.join(filter(str.isdigit, lead.get('cpf', '') or ''))
-            
-            # A mágica acontece aqui no servidor:
-            is_aluno = cpf_lead_limpo in cpfs_alunos and cpf_lead_limpo != ''
-            
-            resultado.append({
-                "id": lead['id'],
-                "nome": lead['nome'],
-                "cpf": lead.get('cpf', '---'),
-                "whatsapp": lead['whatsapp'],
-                "workshop": lead['workshop'],
-                "data_agendada": lead['data_agendada'],
-                "status": lead.get('status', 'Pendente'),
-                "vendedor": lead.get('vendedor', '---'),
-                "ja_e_aluno": is_aluno  # Envia pronto para o front
-            })
-            
-        return resultado
-
-    except Exception as e:
-        print(f"Erro CRM: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao processar leads")
-
-@app.patch("/admin/leads-crm/{id_inscricao}")
-def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
-    """
-    Atualiza o status e grava o nome do vendedor que fez a alteração.
-    """
-    if not authorization: raise HTTPException(status_code=401)
-    
-    try:
-        # 1. Identifica o vendedor logado
-        token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        
-        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user.user.id).execute()
-        if not resp_colab.data:
-            raise HTTPException(status_code=403, detail="Colaborador não encontrado")
-            
-        nome_vendedor = resp_colab.data[0]['nome_completo']
-
-        # 2. Atualiza no banco
-        supabase.table("inscricoes").update({
-            "status": dados.status,
-            "vendedor": nome_vendedor
-        }).eq("id", id_inscricao).execute()
-        
-        return {"message": "Status atualizado", "vendedor": nome_vendedor}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 MAPA_CURSOS = {
     "GAME PRO": "game-pro",
@@ -191,16 +104,28 @@ def get_dados_funcionario(authorization: str = Header(None)):
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
-        response = supabase.table("tb_colaboradores").select("nome_completo, id_cargo, tb_cargos(nome_cargo, nivel_acesso)").eq("user_id", user_id).eq("ativo", True).execute()
+        
+        # CORREÇÃO AQUI: Usando !fk_cargos para especificar a relação
+        response = supabase.table("tb_colaboradores")\
+            .select("nome_completo, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
+            .eq("user_id", user_id)\
+            .eq("ativo", True)\
+            .execute()
+            
         if not response.data:
             raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
+        
         funcionario = response.data[0]
+        # O Supabase retorna tb_cargos como um objeto dentro do dicionário, 
+        # mas como usamos o alias !fk_cargos, a chave no JSON pode ser 'tb_cargos' mesmo.
+        
         return {
             "nome": funcionario['nome_completo'],
             "cargo": funcionario['tb_cargos']['nome_cargo'],
             "nivel": funcionario['tb_cargos']['nivel_acesso']
         }
     except Exception as e:
+        print(f"Erro meus-dados: {e}") # Log para debug
         raise HTTPException(status_code=403, detail="Acesso negado")
 
 @app.post("/admin/cadastrar-aluno")
@@ -354,14 +279,13 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Token ausente")
 
     try:
-        # 1. Identificar quem está logado
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
-        # 2. Buscar dados do colaborador e seu nível de acesso
+        # CORREÇÃO AQUI TAMBÉM: Usando !fk_cargos
         colab_resp = supabase.table("tb_colaboradores")\
-            .select("id_colaborador, id_cargo, tb_cargos(nivel_acesso)")\
+            .select("id_colaborador, id_cargo, tb_cargos!fk_cargos(nivel_acesso)")\
             .eq("user_id", user_id)\
             .execute()
 
@@ -372,15 +296,12 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
         meu_id_colaborador = colaborador['id_colaborador']
         nivel_acesso = colaborador['tb_cargos']['nivel_acesso']
 
-        # 3. Lógica de Filtragem
         lista_alunos_permitidos = []
         filtrar_por_aluno = False
 
-        # Se for Professor ou Nível baixo (< 8), filtra os alunos
         if nivel_acesso < 8:
             filtrar_por_aluno = True
             
-            # A) Busca as turmas que este professor dá aula
             turmas_resp = supabase.table("tb_turmas")\
                 .select("codigo_turma")\
                 .eq("id_professor", meu_id_colaborador)\
@@ -389,9 +310,8 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
             codigos_turmas = [t['codigo_turma'] for t in turmas_resp.data]
 
             if not codigos_turmas:
-                return [] # Professor sem turmas não vê ninguém
+                return [] 
 
-            # B) Busca os alunos matriculados nessas turmas
             matriculas_resp = supabase.table("tb_matriculas")\
                 .select("id_aluno")\
                 .in_("codigo_turma", codigos_turmas)\
@@ -400,19 +320,16 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
             lista_alunos_permitidos = [m['id_aluno'] for m in matriculas_resp.data]
             
             if not lista_alunos_permitidos:
-                return [] # Nenhum aluno nas turmas
+                return [] 
 
-        # 4. Buscar as mensagens (Filtrando ou Pegando Tudo)
         query = supabase.table("tb_chat").select("id_aluno, mensagem, created_at, tb_alunos(nome_completo)")\
             .order("created_at", desc=True).limit(300)
         
-        # Aplica o filtro se não for admin
         if filtrar_por_aluno:
             query = query.in_("id_aluno", lista_alunos_permitidos)
             
         msgs = query.execute()
         
-        # 5. Agrupar conversas (Lógica de visualização)
         conversas = {}
         for m in msgs.data:
             aid = m['id_aluno']
@@ -447,4 +364,63 @@ def admin_responder(dados: ChatAdminReply):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# --- NOVAS ROTAS CRM ---
 
+@app.get("/admin/leads-crm")
+def get_leads_crm(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        
+        resp_insc = supabase.table("inscricoes").select("*").order("created_at", desc=True).execute()
+        leads = resp_insc.data
+
+        resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
+        cpfs_alunos = set()
+        for a in resp_alunos.data:
+            if a.get('cpf'):
+                cpfs_alunos.add( ''.join(filter(str.isdigit, a['cpf'])) )
+
+        resultado = []
+        for lead in leads:
+            cpf_lead_limpo = ''.join(filter(str.isdigit, lead.get('cpf', '') or ''))
+            is_aluno = cpf_lead_limpo in cpfs_alunos and cpf_lead_limpo != ''
+            
+            resultado.append({
+                "id": lead['id'],
+                "nome": lead['nome'],
+                "cpf": lead.get('cpf', '---'),
+                "whatsapp": lead['whatsapp'],
+                "workshop": lead['workshop'],
+                "data_agendada": lead['data_agendada'],
+                "status": lead.get('status', 'Pendente'),
+                "vendedor": lead.get('vendedor', '---'),
+                "ja_e_aluno": is_aluno
+            })
+        return resultado
+    except Exception as e:
+        print(f"Erro CRM: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao processar leads")
+
+@app.patch("/admin/leads-crm/{id_inscricao}")
+def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        
+        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user.user.id).execute()
+        if not resp_colab.data:
+            raise HTTPException(status_code=403, detail="Colaborador não encontrado")
+            
+        nome_vendedor = resp_colab.data[0]['nome_completo']
+
+        supabase.table("inscricoes").update({
+            "status": dados.status,
+            "vendedor": nome_vendedor
+        }).eq("id", id_inscricao).execute()
+        
+        return {"message": "Status atualizado", "vendedor": nome_vendedor}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
