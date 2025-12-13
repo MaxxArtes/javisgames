@@ -43,6 +43,14 @@ class PerfilUpdateData(BaseModel):
     nova_senha: str | None = None
 
 # --- MODELOS DE DADOS ---
+class TurmaData(BaseModel):
+    codigo: str
+    id_professor: int | None = None
+    curso: str
+    dia_semana: str
+    horario: str
+    sala: str
+    status: str
 class LoginData(BaseModel):
     email: str
     password: str
@@ -110,6 +118,59 @@ def enviar_mensagem_zapi(telefone_destino: str, mensagem_texto: str):
         return False
 
 # --- ROTAS ---
+# --- ROTAS DE TURMAS ---
+
+@app.get("/admin/gerenciar-turmas")
+def admin_listar_turmas_completo(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Busca turmas e o nome do professor associado
+        # Usamos !inner ou left join implicito
+        response = supabase.table("tb_turmas")\
+            .select("*, tb_colaboradores(nome_completo)")\
+            .order("codigo_turma")\
+            .execute()
+        return response.data
+    except Exception as e:
+        print(f"Erro listar turmas: {e}")
+        return []
+
+@app.post("/admin/salvar-turma")
+def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Verifica se é edição (verificando se já existe, ou front manda flag)
+        # Vamos tentar inserir, se der erro de chave duplicada, é pra ser edição? 
+        # Melhor separar: POST = Criar, PUT = Editar.
+        
+        supabase.table("tb_turmas").insert({
+            "codigo_turma": dados.codigo.upper(),
+            "id_professor": dados.id_professor,
+            "nome_curso": dados.curso,
+            "dia_semana": dados.dia_semana,
+            "horario": dados.horario,
+            "sala": dados.sala,
+            "status": dados.status
+        }).execute()
+        return {"message": "Turma criada!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/admin/editar-turma/{codigo_original}")
+def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        supabase.table("tb_turmas").update({
+            "id_professor": dados.id_professor,
+            "nome_curso": dados.curso,
+            "dia_semana": dados.dia_semana,
+            "horario": dados.horario,
+            "sala": dados.sala,
+            "status": dados.status
+        }).eq("codigo_turma", codigo_original).execute()
+        return {"message": "Turma atualizada!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
@@ -556,6 +617,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
