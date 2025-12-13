@@ -517,6 +517,19 @@ def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(No
     except Exception as e:
         print(f"Erro ao atualizar perfil: {e}")
         raise HTTPException(status_code=500, detail="Erro interno ao atualizar dados.")
+        
+@app.get("/admin/listar-turmas")
+def admin_listar_turmas(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Busca todas as turmas ativas
+        # Ajuste os campos conforme sua tabela tb_turmas (ex: codigo_turma, nome_curso, horario)
+        response = supabase.table("tb_turmas").select("*").execute()
+        return response.data
+    except Exception as e:
+        print(f"Erro ao listar turmas: {e}")
+        return []
+
 
 
 
