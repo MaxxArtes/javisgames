@@ -63,12 +63,11 @@ class NovoAlunoData(BaseModel):
 class ReposicaoData(BaseModel):
     id_aluno: int
     data_hora: str 
-    motivo: str
-    # Novos campos:
     turma_codigo: str
     id_professor: int
     conteudo_aula: str
-    observacoes: str | None = None
+    motivo: str | None = None # Agora é opcional
+    observacoes: str | None = None # Agora é opcional
 
 class InscricaoAulaData(BaseModel):
     nome: str
@@ -214,7 +213,6 @@ def admin_listar_alunos():
 def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # Pega o usuário logado para salvar quem criou (opcional, mas bom ter)
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
@@ -222,15 +220,14 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
         supabase.table("tb_reposicoes").insert({
             "id_aluno": dados.id_aluno,
             "data_reposicao": dados.data_hora,
-            "motivo": dados.motivo,
-            # Novos campos salvando no banco:
             "codigo_turma": dados.turma_codigo,
             "id_professor": dados.id_professor,
             "conteudo_aula": dados.conteudo_aula,
-            "observacoes": dados.observacoes,
+            "motivo": dados.motivo,           # Pode ir Nulo
+            "observacoes": dados.observacoes, # Pode ir Nulo
             "criado_por": user_id,
             "status": "Agendada",
-            "presenca": None # Começa nulo (nem falta, nem presença)
+            "presenca": None 
         }).execute()
         
         return {"message": "Reposição agendada com sucesso!"}
@@ -559,6 +556,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
