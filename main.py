@@ -105,7 +105,7 @@ def get_dados_funcionario(authorization: str = Header(None)):
         user = supabase.auth.get_user(token)
         user_id = user.user.id
         
-        # CORREÇÃO AQUI: Usando !fk_cargos para especificar a relação
+        # --- CORREÇÃO AQUI: Usando !fk_cargos para especificar a relação exata ---
         response = supabase.table("tb_colaboradores")\
             .select("nome_completo, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
             .eq("user_id", user_id)\
@@ -116,8 +116,6 @@ def get_dados_funcionario(authorization: str = Header(None)):
             raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
         
         funcionario = response.data[0]
-        # O Supabase retorna tb_cargos como um objeto dentro do dicionário, 
-        # mas como usamos o alias !fk_cargos, a chave no JSON pode ser 'tb_cargos' mesmo.
         
         return {
             "nome": funcionario['nome_completo'],
@@ -125,8 +123,8 @@ def get_dados_funcionario(authorization: str = Header(None)):
             "nivel": funcionario['tb_cargos']['nivel_acesso']
         }
     except Exception as e:
-        print(f"Erro meus-dados: {e}") # Log para debug
-        raise HTTPException(status_code=403, detail="Acesso negado")
+        print(f"Erro ao buscar dados do funcionário: {e}")
+        raise HTTPException(status_code=403, detail="Acesso negado ou erro interno")
 
 @app.post("/admin/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
@@ -283,7 +281,7 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
-        # CORREÇÃO AQUI TAMBÉM: Usando !fk_cargos
+        # --- CORREÇÃO AQUI TAMBÉM: Usando !fk_cargos para especificar a relação ---
         colab_resp = supabase.table("tb_colaboradores")\
             .select("id_colaborador, id_cargo, tb_cargos!fk_cargos(nivel_acesso)")\
             .eq("user_id", user_id)\
@@ -299,6 +297,7 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
         lista_alunos_permitidos = []
         filtrar_por_aluno = False
 
+        # Se não for admin/gerente (nível < 8), aplica filtro
         if nivel_acesso < 8:
             filtrar_por_aluno = True
             
@@ -310,7 +309,7 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
             codigos_turmas = [t['codigo_turma'] for t in turmas_resp.data]
 
             if not codigos_turmas:
-                return [] 
+                return [] # Sem turmas, sem alunos
 
             matriculas_resp = supabase.table("tb_matriculas")\
                 .select("id_aluno")\
@@ -373,13 +372,16 @@ def get_leads_crm(authorization: str = Header(None)):
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         
+        # Busca inscrições
         resp_insc = supabase.table("inscricoes").select("*").order("created_at", desc=True).execute()
         leads = resp_insc.data
 
+        # Busca CPFs dos alunos para comparação
         resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
         cpfs_alunos = set()
         for a in resp_alunos.data:
             if a.get('cpf'):
+                # Limpa o CPF (remove pontos e traços) para comparação
                 cpfs_alunos.add( ''.join(filter(str.isdigit, a['cpf'])) )
 
         resultado = []
@@ -409,8 +411,10 @@ def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorizat
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
+        user_id = user.user.id
         
-        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user.user.id).execute()
+        # Identifica o colaborador logado para registrar no lead
+        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user_id).execute()
         if not resp_colab.data:
             raise HTTPException(status_code=403, detail="Colaborador não encontrado")
             
