@@ -73,6 +73,95 @@ class ChatMensagemData(BaseModel):
 class ChatAdminReply(BaseModel):
     id_aluno: int
     mensagem: str
+    
+# --- NOVAS ROTAS PARA O CRM (Inscrições) ---
+
+class StatusUpdateData(BaseModel):
+    status: str
+
+@app.get("/admin/leads-crm")
+def get_leads_crm(authorization: str = Header(None)):
+    """
+    Retorna a lista de inscrições já processada, dizendo quem é aluno e quem não é.
+    Segurança: Apenas níveis autorizados podem ver.
+    """
+    if not authorization: raise HTTPException(status_code=401)
+    
+    try:
+        # 1. Verifica quem está pedindo
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        
+        # Verifica permissão (opcional: checar nível de acesso aqui)
+        # ...
+
+        # 2. Busca Inscrições
+        resp_insc = supabase.table("inscricoes").select("*").order("created_at", desc=True).execute()
+        leads = resp_insc.data
+
+        # 3. Busca APENAS os CPFs dos alunos para comparar (Leve e Rápido)
+        resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
+        # Cria uma lista limpa de CPFs (apenas números) para busca rápida
+        cpfs_alunos = set()
+        for a in resp_alunos.data:
+            if a.get('cpf'):
+                cpfs_alunos.add( ''.join(filter(str.isdigit, a['cpf'])) )
+
+        # 4. Processa os dados aqui no Servidor (Python)
+        resultado = []
+        for lead in leads:
+            cpf_lead_limpo = ''.join(filter(str.isdigit, lead.get('cpf', '') or ''))
+            
+            # A mágica acontece aqui no servidor:
+            is_aluno = cpf_lead_limpo in cpfs_alunos and cpf_lead_limpo != ''
+            
+            resultado.append({
+                "id": lead['id'],
+                "nome": lead['nome'],
+                "cpf": lead.get('cpf', '---'),
+                "whatsapp": lead['whatsapp'],
+                "workshop": lead['workshop'],
+                "data_agendada": lead['data_agendada'],
+                "status": lead.get('status', 'Pendente'),
+                "vendedor": lead.get('vendedor', '---'),
+                "ja_e_aluno": is_aluno  # Envia pronto para o front
+            })
+            
+        return resultado
+
+    except Exception as e:
+        print(f"Erro CRM: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao processar leads")
+
+@app.patch("/admin/leads-crm/{id_inscricao}")
+def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
+    """
+    Atualiza o status e grava o nome do vendedor que fez a alteração.
+    """
+    if not authorization: raise HTTPException(status_code=401)
+    
+    try:
+        # 1. Identifica o vendedor logado
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        
+        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user.user.id).execute()
+        if not resp_colab.data:
+            raise HTTPException(status_code=403, detail="Colaborador não encontrado")
+            
+        nome_vendedor = resp_colab.data[0]['nome_completo']
+
+        # 2. Atualiza no banco
+        supabase.table("inscricoes").update({
+            "status": dados.status,
+            "vendedor": nome_vendedor
+        }).eq("id", id_inscricao).execute()
+        
+        return {"message": "Status atualizado", "vendedor": nome_vendedor}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 MAPA_CURSOS = {
     "GAME PRO": "game-pro",
@@ -357,4 +446,5 @@ def admin_responder(dados: ChatAdminReply):
         return {"message": "Respondido"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
