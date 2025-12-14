@@ -9,15 +9,10 @@ from datetime import datetime, timedelta
 
 # Dicionário para traduzir dia da semana em número (0 = Segunda, 6 = Domingo)
 DIAS_MAPA = {
-    "Segunda": 0, "Segunda-feira": 0,
-    "Terça": 1, "Terça-feira": 1,
-    "Quarta": 2, "Quarta-feira": 2,
-    "Quinta": 3, "Quinta-feira": 3,
-    "Sexta": 4, "Sexta-feira": 4,
-    "Sábado": 5, "Sabado": 5,
-    "Domingo": 6
+    "Segunda": 0, "Segunda-feira": 0, "Terça": 1, "Terça-feira": 1,
+    "Quarta": 2, "Quarta-feira": 2, "Quinta": 3, "Quinta-feira": 3,
+    "Sexta": 4, "Sexta-feira": 4, "Sábado": 5, "Sabado": 5, "Domingo": 6
 }
-
 # 1. Carrega as variáveis de ambiente
 load_dotenv()
 
@@ -804,6 +799,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
