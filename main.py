@@ -141,14 +141,26 @@ def admin_listar_turmas_completo(authorization: str = Header(None)):
         print(f"Erro listar turmas: {e}")
         return []
 
+# Função auxiliar para calcular data final (1 aula por semana)
+def calcular_previsao(data_inicio_str: str, qtd: int):
+    if not data_inicio_str or not qtd:
+        return None
+    try:
+        dt_inicio = datetime.strptime(data_inicio_str, "%Y-%m-%d")
+        # Subtrai 1 porque a primeira aula conta como a semana 0
+        dias_totais = (qtd - 1) * 7 
+        dt_fim = dt_inicio + timedelta(days=dias_totais)
+        return dt_fim.strftime("%Y-%m-%d")
+    except:
+        return None
+
 @app.post("/admin/salvar-turma")
 def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # Verifica se é edição (verificando se já existe, ou front manda flag)
-        # Vamos tentar inserir, se der erro de chave duplicada, é pra ser edição? 
-        # Melhor separar: POST = Criar, PUT = Editar.
-        
+        # Calcula previsão automática
+        previsao = calcular_previsao(dados.data_inicio, dados.qtd_aulas)
+
         supabase.table("tb_turmas").insert({
             "codigo_turma": dados.codigo.upper(),
             "id_professor": dados.id_professor,
@@ -156,7 +168,11 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
             "dia_semana": dados.dia_semana,
             "horario": dados.horario,
             "sala": dados.sala,
-            "status": dados.status
+            "status": dados.status,
+            "data_inicio": dados.data_inicio,
+            "qtd_aulas": dados.qtd_aulas,
+            "previsao_termino": previsao, # Salva o cálculo
+            "data_termino_real": dados.data_termino_real
         }).execute()
         return {"message": "Turma criada!"}
     except Exception as e:
@@ -166,13 +182,20 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
 def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
+        # Recalcula previsão ao editar
+        previsao = calcular_previsao(dados.data_inicio, dados.qtd_aulas)
+
         supabase.table("tb_turmas").update({
             "id_professor": dados.id_professor,
             "nome_curso": dados.curso,
             "dia_semana": dados.dia_semana,
             "horario": dados.horario,
             "sala": dados.sala,
-            "status": dados.status
+            "status": dados.status,
+            "data_inicio": dados.data_inicio,
+            "qtd_aulas": dados.qtd_aulas,
+            "previsao_termino": previsao, # Atualiza o cálculo
+            "data_termino_real": dados.data_termino_real
         }).eq("codigo_turma", codigo_original).execute()
         return {"message": "Turma atualizada!"}
     except Exception as e:
@@ -623,6 +646,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
