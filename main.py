@@ -392,56 +392,98 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro reposição: {e}")
         raise HTTPException(status_code=400, detail="Erro interno ao agendar.")
+        
 @app.get("/admin/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
         eventos = []
 
-        # 1. BUSCAR REPOSIÇÕES (Agora com ID, Presença e Obs)
+        # --- 1. BUSCAR REPOSIÇÕES ---
+        # Query segura que traz os dados mesmo se professor/aluno forem nulos
         resp_repo = supabase.table("tb_reposicoes")\
-            .select("id, data_reposicao, motivo, observacoes, presenca, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+            .select("id, data_reposicao, motivo, observacoes, presenca, id_aluno, id_professor, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
             .execute()
         
         for rep in resp_repo.data:
-            nome_aluno = rep['tb_alunos']['nome_completo'] if rep.get('tb_alunos') else "Aluno"
-            nome_prof = rep['tb_colaboradores']['nome_completo'] if rep.get('tb_colaboradores') else "?"
+            # Tratamento de segurança para nomes (Evita erro se for None/Null)
+            nome_aluno = "Aluno (Removido)"
+            if rep.get('tb_alunos') and rep['tb_alunos'].get('nome_completo'):
+                nome_aluno = rep['tb_alunos']['nome_completo']
+            elif rep.get('id_aluno'):
+                nome_aluno = f"Aluno #{rep['id_aluno']}"
+
+            nome_prof = "?"
+            if rep.get('tb_colaboradores') and rep['tb_colaboradores'].get('nome_completo'):
+                nome_prof = rep['tb_colaboradores']['nome_completo']
             
             eventos.append({
-                "id": rep['id'], # IMPORTANTE: ID para edição
+                "id": rep['id'],
                 "title": f"🔄 Reposição: {nome_aluno} ({nome_prof})",
                 "start": rep['data_reposicao'],
-                "color": "#ff4d4d",
+                "color": "#ff4d4d", # Vermelho
                 "tipo": "reposicao",
-                "presenca": rep['presenca'],       # Envia estado atual
-                "observacoes": rep['observacoes']  # Envia obs atual
+                "presenca": rep.get('presenca'),      
+                "observacoes": rep.get('observacoes')
             })
 
-        # ... (PARTE 2 DAS TURMAS CONTINUA IGUAL A ANTES) ...
-        # ... (Copie o bloco das turmas que te passei na resposta anterior aqui) ...
-        # Só certifique-se de que o loop das turmas adiciona "tipo": "aula" para não confundir.
-        
-        # Para facilitar, vou resumir o bloco de turmas aqui para você não perder:
-        resp_turmas = supabase.table("tb_turmas").select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)").in_("status", ["Em Andamento", "Planejada"]).execute()
-        for turma in resp_turmas.data:
-            # ... (Lógica de calculo de datas igual ao anterior) ...
-            # ... Dentro do loop das datas: ...
-                    eventos.append({
-                        "id": f"aula-{turma['codigo_turma']}-{i}", # ID ficticio para aula
-                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']}",
-                        "start": start_iso,
-                        "color": "#0088cc", 
-                        "tipo": "aula" # Diferencia aula de reposição
-                    })
-                    dt_atual += timedelta(days=7)
-            # ... (fim do try/catch das turmas) ...
+        # --- 2. BUSCAR TURMAS (Aulas Recorrentes) ---
+        try:
+            resp_turmas = supabase.table("tb_turmas")\
+                .select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)")\
+                .in_("status", ["Em Andamento", "Planejada"])\
+                .execute()
+
+            for turma in resp_turmas.data:
+                # Se faltar dados vitais para o calendário, pula essa turma
+                if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']: 
+                    continue
+                
+                try:
+                    dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
+                    
+                    # Identifica o dia da semana (Segunda=0, ... Domingo=6)
+                    dia_str = turma['dia_semana'].split("-")[0].strip()
+                    dia_alvo = DIAS_MAPA.get(dia_str, 0) 
+                    
+                    # Ajusta a data de início para cair no dia da semana correto
+                    dias_diff = (dia_alvo - dt_inicio.weekday() + 7) % 7
+                    dt_atual = dt_inicio + timedelta(days=dias_diff)
+                    
+                    hora_ini = turma['horario'].split("-")[0].strip()
+                    
+                    nome_prof_t = "Sem Prof"
+                    if turma.get('tb_colaboradores') and turma['tb_colaboradores'].get('nome_completo'):
+                        nome_prof_t = turma['tb_colaboradores']['nome_completo']
+
+                    # Gera as N aulas
+                    for i in range(turma['qtd_aulas']):
+                        # Formata para ISO (YYYY-MM-DDTHH:MM:SS)
+                        start_iso = f"{dt_atual.strftime('%Y-%m-%d')}T{hora_ini}:00"
+                        
+                        eventos.append({
+                            "id": f"aula-{turma['codigo_turma']}-{i}", # ID virtual
+                            "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof_t})",
+                            "start": start_iso,
+                            "color": "#0088cc", # Azul
+                            "tipo": "aula"
+                        })
+                        # Avança 1 semana
+                        dt_atual += timedelta(days=7)
+                except Exception as e_loop:
+                    print(f"Erro ao processar turma {turma.get('codigo_turma')}: {e_loop}")
+                    continue
+
+        except Exception as e_turma:
+            print(f"Erro geral ao buscar turmas: {e_turma}")
+            # Não para o código, apenas loga e segue entregando as reposições
 
         return eventos
 
     except Exception as e:
-        print(f"Erro geral agenda: {e}")
+        print(f"Erro CRÍTICO na agenda: {e}")
+        # Retorna lista vazia para não quebrar o site
         return []
-
 # ---ATUALIZAR REPOSIÇÃO ---
 @app.patch("/admin/reposicao/{id_repo}")
 def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
@@ -762,6 +804,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
