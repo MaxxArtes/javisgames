@@ -313,29 +313,80 @@ def admin_listar_alunos():
 @app.post("/admin/agendar-reposicao")
 def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
+        # --- 1. PREPARAR DADOS DA REPOSIÇÃO ---
+        # Converte string para objeto de data/hora
+        # Formato esperado do HTML: "2024-02-20T14:30"
+        dt_repo_inicio = datetime.strptime(dados.data_hora, "%Y-%m-%dT%H:%M")
+        # Reposição dura 1 Hora
+        dt_repo_fim = dt_repo_inicio + timedelta(hours=1) 
+
+        # --- 2. VERIFICAR CONFLITOS COM TURMAS DO PROFESSOR ---
+        # Busca todas as turmas ATIVAS deste professor
+        resp_turmas = supabase.table("tb_turmas")\
+            .select("*")\
+            .eq("id_professor", dados.id_professor)\
+            .in_("status", ["Em Andamento", "Planejada"])\
+            .execute()
+
+        for turma in resp_turmas.data:
+            # Pula se faltar dados essenciais
+            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']:
+                continue
+
+            # 2.1 - Calcular data da primeira aula (ajustando dia da semana)
+            dt_inicio_turma = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
+            dia_alvo = DIAS_MAPA.get(turma['dia_semana'].split("-")[0].strip(), 0)
+            dias_diff = (dia_alvo - dt_inicio_turma.weekday() + 7) % 7
+            dt_aula_atual = dt_inicio_turma + timedelta(days=dias_diff)
+
+            # 2.2 - Pegar hora da aula (Ex: "14:00")
+            hora_str = turma['horario'].split("-")[0].strip() # Pega só o inicio
+            hora_h, hora_m = map(int, hora_str.split(":"))
+
+            # 2.3 - Varrer todas as aulas dessa turma
+            for _ in range(turma['qtd_aulas']):
+                # Monta o DateTime exato desta aula
+                inicio_aula = dt_aula_atual.replace(hour=hora_h, minute=hora_m)
+                # Aula de Curso dura 2h 30min
+                fim_aula = inicio_aula + timedelta(hours=2, minutes=30)
+
+                # 2.4 - A LÓGICA DE COLISÃO
+                # (InicioRepo < FimAula) E (FimRepo > InicioAula)
+                if (dt_repo_inicio < fim_aula) and (dt_repo_fim > inicio_aula):
+                    # CONFLITO DETECTADO!
+                    msg_erro = f"Conflito! O Prof. já tem aula da turma {turma['codigo_turma']} neste horário ({inicio_aula.strftime('%d/%m %H:%M')} às {fim_aula.strftime('%H:%M')})."
+                    raise HTTPException(status_code=409, detail=msg_erro)
+
+                # Avança para a próxima semana
+                dt_aula_atual += timedelta(days=7)
+
+        # --- 3. SE NÃO HOUVE CONFLITO, SALVA ---
         supabase.table("tb_reposicoes").insert({
             "id_aluno": dados.id_aluno,
             "data_reposicao": dados.data_hora,
             "codigo_turma": dados.turma_codigo,
             "id_professor": dados.id_professor,
             "conteudo_aula": dados.conteudo_aula,
-            "motivo": dados.motivo,           # Pode ir Nulo
-            "observacoes": dados.observacoes, # Pode ir Nulo
+            "motivo": dados.motivo,
+            "observacoes": dados.observacoes,
             "criado_por": user_id,
             "status": "Agendada",
             "presenca": None 
         }).execute()
         
         return {"message": "Reposição agendada com sucesso!"}
+
+    except HTTPException as he:
+        raise he # Repassa o erro de conflito para o front
     except Exception as e:
         print(f"Erro reposição: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
+        raise HTTPException(status_code=400, detail="Erro interno ao agendar.")
 @app.get("/admin/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -722,6 +773,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
