@@ -7,6 +7,17 @@ from supabase import create_client, Client
 import requests 
 from datetime import datetime, timedelta
 
+# Dicionário para traduzir dia da semana em número (0 = Segunda, 6 = Domingo)
+DIAS_MAPA = {
+    "Segunda": 0, "Segunda-feira": 0,
+    "Terça": 1, "Terça-feira": 1,
+    "Quarta": 2, "Quarta-feira": 2,
+    "Quinta": 3, "Quinta-feira": 3,
+    "Sexta": 4, "Sexta-feira": 4,
+    "Sábado": 5, "Sabado": 5,
+    "Domingo": 6
+}
+
 # 1. Carrega as variáveis de ambiente
 load_dotenv()
 
@@ -326,18 +337,83 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/admin/agenda-geral")
-def admin_agenda():
+def admin_agenda(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
     try:
-        reposicoes = supabase.table("tb_reposicoes").select("data_reposicao, tb_alunos(nome_completo)").execute()
         eventos = []
-        for rep in reposicoes.data:
+
+        # --- 1. BUSCAR REPOSIÇÕES (Eventos Únicos) ---
+        resp_repo = supabase.table("tb_reposicoes")\
+            .select("data_reposicao, motivo, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+            .execute()
+        
+        for rep in resp_repo.data:
+            nome_aluno = rep['tb_alunos']['nome_completo'] if rep.get('tb_alunos') else "Aluno"
+            nome_prof = rep['tb_colaboradores']['nome_completo'] if rep.get('tb_colaboradores') else "?"
+            
+            # Reposição é Vermelha (#ff4d4d)
             eventos.append({
-                "title": f"Reposição: {rep['tb_alunos']['nome_completo']}",
+                "title": f"🔄 Reposição: {nome_aluno} ({nome_prof})",
                 "start": rep['data_reposicao'],
-                "color": "#ff4d4d" 
+                "color": "#ff4d4d",
+                "tipo": "reposicao"
             })
+
+        # --- 2. BUSCAR TURMAS (Eventos Recorrentes) ---
+        # Buscamos turmas que estão 'Em Andamento' ou 'Planejada'
+        resp_turmas = supabase.table("tb_turmas")\
+            .select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)")\
+            .in_("status", ["Em Andamento", "Planejada"])\
+            .execute()
+
+        for turma in resp_turmas.data:
+            # Validações básicas para não quebrar o cálculo
+            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['dia_semana'] or not turma['horario']:
+                continue
+
+            try:
+                # 2.1 - Processar Datas
+                dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
+                dia_semana_alvo = DIAS_MAPA.get(turma['dia_semana'].split("-")[0].strip(), 0) # Pega o número do dia
+                
+                # Ajusta a data de início para cair no primeiro dia da semana correto
+                # Ex: Data Inicio 01/01 (Qua), mas aula é Sexta. Avança para 03/01.
+                dias_diferenca = (dia_semana_alvo - dt_inicio.weekday() + 7) % 7
+                dt_atual = dt_inicio + timedelta(days=dias_diferenca)
+
+                # 2.2 - Processar Horário (Ex: "14:00 - 16:00")
+                partes_hora = turma['horario'].replace(" ", "").split("-")
+                hora_ini = partes_hora[0] # "14:00"
+                # Se tiver hora fim, usa, senão chuta 1h de aula
+                # Para o FullCalendar, precisamos da string "YYYY-MM-DDTHH:MM:SS"
+                
+                nome_prof = turma['tb_colaboradores']['nome_completo'] if turma.get('tb_colaboradores') else "Sem Prof"
+
+                # 2.3 - Gerar as N aulas
+                for i in range(turma['qtd_aulas']):
+                    data_iso = dt_atual.strftime("%Y-%m-%d")
+                    start_iso = f"{data_iso}T{hora_ini}:00"
+                    
+                    # Aula Normal é Azul (#00FFFF ou similar)
+                    eventos.append({
+                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof})",
+                        "start": start_iso,
+                        "color": "#0088cc", 
+                        "tipo": "aula"
+                    })
+
+                    # Avança 1 semana
+                    dt_atual += timedelta(days=7)
+
+            except Exception as e:
+                print(f"Erro ao processar turma {turma['codigo_turma']}: {e}")
+                continue
+
         return eventos
-    except: return []
+
+    except Exception as e:
+        print(f"Erro geral agenda: {e}")
+        return []
 
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
@@ -646,6 +722,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
