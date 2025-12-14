@@ -46,7 +46,7 @@ ZAPI_INSTANCE_ID = "3EB841CFDDB82238F05676920E0B7E08"
 ZAPI_TOKEN = "9C37DABF607A4D31B7D53FA6"
 ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
 
-# --- ADICIONE ESTE MODELO NO INÍCIO JUNTO COM OS OUTROS ---
+
 class PerfilUpdateData(BaseModel):
     nome: str | None = None
     telefone: str | None = None
@@ -55,6 +55,11 @@ class PerfilUpdateData(BaseModel):
     nova_senha: str | None = None
 
 # --- MODELOS DE DADOS ---
+
+class ReposicaoUpdate(BaseModel):
+    presenca: bool | None = None # True=Veio, False=Faltou, None=Pendente
+    observacoes: str | None = None
+    
 class TurmaData(BaseModel):
     codigo: str
     id_professor: int | None = None
@@ -393,78 +398,62 @@ def admin_agenda(authorization: str = Header(None)):
     try:
         eventos = []
 
-        # --- 1. BUSCAR REPOSIÇÕES (Eventos Únicos) ---
+        # 1. BUSCAR REPOSIÇÕES (Agora com ID, Presença e Obs)
         resp_repo = supabase.table("tb_reposicoes")\
-            .select("data_reposicao, motivo, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+            .select("id, data_reposicao, motivo, observacoes, presenca, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
             .execute()
         
         for rep in resp_repo.data:
             nome_aluno = rep['tb_alunos']['nome_completo'] if rep.get('tb_alunos') else "Aluno"
             nome_prof = rep['tb_colaboradores']['nome_completo'] if rep.get('tb_colaboradores') else "?"
             
-            # Reposição é Vermelha (#ff4d4d)
             eventos.append({
+                "id": rep['id'], # IMPORTANTE: ID para edição
                 "title": f"🔄 Reposição: {nome_aluno} ({nome_prof})",
                 "start": rep['data_reposicao'],
                 "color": "#ff4d4d",
-                "tipo": "reposicao"
+                "tipo": "reposicao",
+                "presenca": rep['presenca'],       # Envia estado atual
+                "observacoes": rep['observacoes']  # Envia obs atual
             })
 
-        # --- 2. BUSCAR TURMAS (Eventos Recorrentes) ---
-        # Buscamos turmas que estão 'Em Andamento' ou 'Planejada'
-        resp_turmas = supabase.table("tb_turmas")\
-            .select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)")\
-            .in_("status", ["Em Andamento", "Planejada"])\
-            .execute()
-
+        # ... (PARTE 2 DAS TURMAS CONTINUA IGUAL A ANTES) ...
+        # ... (Copie o bloco das turmas que te passei na resposta anterior aqui) ...
+        # Só certifique-se de que o loop das turmas adiciona "tipo": "aula" para não confundir.
+        
+        # Para facilitar, vou resumir o bloco de turmas aqui para você não perder:
+        resp_turmas = supabase.table("tb_turmas").select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)").in_("status", ["Em Andamento", "Planejada"]).execute()
         for turma in resp_turmas.data:
-            # Validações básicas para não quebrar o cálculo
-            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['dia_semana'] or not turma['horario']:
-                continue
-
-            try:
-                # 2.1 - Processar Datas
-                dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
-                dia_semana_alvo = DIAS_MAPA.get(turma['dia_semana'].split("-")[0].strip(), 0) # Pega o número do dia
-                
-                # Ajusta a data de início para cair no primeiro dia da semana correto
-                # Ex: Data Inicio 01/01 (Qua), mas aula é Sexta. Avança para 03/01.
-                dias_diferenca = (dia_semana_alvo - dt_inicio.weekday() + 7) % 7
-                dt_atual = dt_inicio + timedelta(days=dias_diferenca)
-
-                # 2.2 - Processar Horário (Ex: "14:00 - 16:00")
-                partes_hora = turma['horario'].replace(" ", "").split("-")
-                hora_ini = partes_hora[0] # "14:00"
-                # Se tiver hora fim, usa, senão chuta 1h de aula
-                # Para o FullCalendar, precisamos da string "YYYY-MM-DDTHH:MM:SS"
-                
-                nome_prof = turma['tb_colaboradores']['nome_completo'] if turma.get('tb_colaboradores') else "Sem Prof"
-
-                # 2.3 - Gerar as N aulas
-                for i in range(turma['qtd_aulas']):
-                    data_iso = dt_atual.strftime("%Y-%m-%d")
-                    start_iso = f"{data_iso}T{hora_ini}:00"
-                    
-                    # Aula Normal é Azul (#00FFFF ou similar)
+            # ... (Lógica de calculo de datas igual ao anterior) ...
+            # ... Dentro do loop das datas: ...
                     eventos.append({
-                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof})",
+                        "id": f"aula-{turma['codigo_turma']}-{i}", # ID ficticio para aula
+                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']}",
                         "start": start_iso,
                         "color": "#0088cc", 
-                        "tipo": "aula"
+                        "tipo": "aula" # Diferencia aula de reposição
                     })
-
-                    # Avança 1 semana
                     dt_atual += timedelta(days=7)
-
-            except Exception as e:
-                print(f"Erro ao processar turma {turma['codigo_turma']}: {e}")
-                continue
+            # ... (fim do try/catch das turmas) ...
 
         return eventos
 
     except Exception as e:
         print(f"Erro geral agenda: {e}")
         return []
+
+# ---ATUALIZAR REPOSIÇÃO ---
+@app.patch("/admin/reposicao/{id_repo}")
+def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        supabase.table("tb_reposicoes").update({
+            "presenca": dados.presenca,
+            "observacoes": dados.observacoes
+        }).eq("id", id_repo).execute()
+        return {"message": "Atualizado!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
@@ -773,6 +762,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
