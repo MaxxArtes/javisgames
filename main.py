@@ -52,6 +52,11 @@ class TurmaData(BaseModel):
     horario: str
     sala: str
     status: str
+    # Novos campos
+    data_inicio: str | None = None
+    qtd_aulas: int | None = 0
+    data_termino_real: str | None = None
+    
 class LoginData(BaseModel):
     email: str
     password: str
@@ -618,6 +623,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
