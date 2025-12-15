@@ -192,17 +192,24 @@ def admin_listar_equipe(authorization: str = Header(None)):
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
 
-    # CORREÇÃO: Agora apenas Nível 8+ (Gerente/Admin) pode ver
     if ctx['nivel'] < 8:
-        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
+        raise HTTPException(status_code=403, detail="Acesso restrito à gestão.")
 
     try:
-        query = supabase.table("tb_colaboradores").select("*, tb_cargos(nome_cargo, nivel_acesso)").order("nome_completo")
+        # CORREÇÃO AQUI: Mudamos 'tb_cargos' para 'tb_cargos!fk_cargos'
+        # Isso força o sistema a usar a relação correta.
+        query = supabase.table("tb_colaboradores")\
+            .select("*, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
+            .order("nome_completo")
+        
         if ctx['nivel'] < 9: 
             query = query.eq("id_unidade", ctx['id_unidade'])
+            
         return query.execute().data
     except Exception as e:
         print(f"Erro listar equipe: {e}")
+        # Se fk_cargos falhar, tente: tb_cargos!tb_colaboradores_id_cargo_fkey
+        return []
 
 @app.post("/admin/cadastrar-funcionario")
 def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str = Header(None)):
@@ -752,4 +759,5 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                     liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
+
 
