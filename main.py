@@ -192,8 +192,9 @@ def admin_listar_equipe(authorization: str = Header(None)):
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
 
-    if ctx['nivel'] < 4:
-        raise HTTPException(status_code=403, detail="Acesso restrito à gestão.")
+    # CORREÇÃO: Agora apenas Nível 8+ (Gerente/Admin) pode ver
+    if ctx['nivel'] < 8:
+        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
 
     try:
         query = supabase.table("tb_colaboradores").select("*, tb_cargos(nome_cargo, nivel_acesso)").order("nome_completo")
@@ -202,7 +203,6 @@ def admin_listar_equipe(authorization: str = Header(None)):
         return query.execute().data
     except Exception as e:
         print(f"Erro listar equipe: {e}")
-        return []
 
 @app.post("/admin/cadastrar-funcionario")
 def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str = Header(None)):
@@ -210,8 +210,9 @@ def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str =
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
 
-    if ctx['nivel'] < 4:
-        raise HTTPException(status_code=403, detail="Você não tem permissão para cadastrar funcionários.")
+    # CORREÇÃO: Agora apenas Nível 8+ pode cadastrar
+    if ctx['nivel'] < 8:
+        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
 
     try:
         user_auth = supabase.auth.admin.create_user({
@@ -751,3 +752,4 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                     liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
+
