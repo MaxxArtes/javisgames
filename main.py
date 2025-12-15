@@ -593,24 +593,36 @@ def get_leads_crm(authorization: str = Header(None)):
 @app.patch("/admin/leads-crm/{id_inscricao}")
 def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    
     try:
         token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        user_id = user.user.id
+        ctx = get_contexto_usuario(token) # Pega os dados de quem está logado
         
-        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user_id).execute()
-        if not resp_colab.data: raise HTTPException(status_code=403)
-            
+        # --- REGRA DE PERMISSÃO ---
+        # Apenas Vendedor (3), Coordenador (4) ou Gerente/Admin (8, 9, 10) podem editar
+        # Professores (5) e Atendentes (2) só olham.
+        permissoes_edicao = [3, 4, 8, 9, 10]
+        
+        if ctx['nivel'] not in permissoes_edicao:
+            raise HTTPException(status_code=403, detail="Você não tem permissão para editar leads.")
+
+        # Busca o nome para registrar quem alterou
+        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", ctx['user_id']).execute()
         nome_vendedor = resp_colab.data[0]['nome_completo']
 
+        # Atualiza
         supabase.table("inscricoes").update({
             "status": dados.status,
             "vendedor": nome_vendedor
         }).eq("id", id_inscricao).execute()
         
         return {"message": "Status atualizado"}
+        
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Erro update lead: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno")
 
 @app.patch("/admin/meus-dados")
 def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(None)):
@@ -665,3 +677,4 @@ def admin_listar_turmas(authorization: str = Header(None)):
             query = query.eq("id_unidade", ctx['id_unidade'])
         return query.execute().data
     except: return []
+
