@@ -46,6 +46,13 @@ ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_
 
 # --- MODELOS DE DADOS ---
 
+class NovoFuncionarioData(BaseModel):
+    nome: str
+    email: str
+    senha: str
+    telefone: str
+    id_cargo: int
+
 class PerfilUpdateData(BaseModel):
     nome: str | None = None
     telefone: str | None = None
@@ -678,3 +685,71 @@ def admin_listar_turmas(authorization: str = Header(None)):
         return query.execute().data
     except: return []
 
+# --- GESTÃO DE FUNCIONÁRIOS (RH) ---
+
+@app.get("/admin/listar-cargos")
+def admin_listar_cargos(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Retorna lista de cargos para preencher o select
+        return supabase.table("tb_cargos").select("*").order("nivel_acesso").execute().data
+    except: return []
+
+@app.get("/admin/listar-equipe")
+def admin_listar_equipe(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # REGRA DE SEGURANÇA: Só nível 4+ pode ver a lista
+    if ctx['nivel'] < 4:
+        raise HTTPException(status_code=403, detail="Acesso restrito à gestão.")
+
+    try:
+        # Lista funcionários da MESMA unidade do gestor (ou todos se for Diretor)
+        query = supabase.table("tb_colaboradores").select("*, tb_cargos(nome_cargo, nivel_acesso)").order("nome_completo")
+        
+        if ctx['nivel'] < 9: # Se não for diretor, filtra por cidade
+            query = query.eq("id_unidade", ctx['id_unidade'])
+            
+        return query.execute().data
+    except Exception as e:
+        print(f"Erro listar equipe: {e}")
+        return []
+
+@app.post("/admin/cadastrar-funcionario")
+def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # REGRA DE SEGURANÇA: Só nível 4+ pode cadastrar
+    if ctx['nivel'] < 4:
+        raise HTTPException(status_code=403, detail="Você não tem permissão para cadastrar funcionários.")
+
+    try:
+        # 1. Criar Login no Supabase Auth
+        # email_confirm=True permite login imediato sem verificar email
+        user_auth = supabase.auth.admin.create_user({
+            "email": dados.email,
+            "password": dados.senha,
+            "email_confirm": True 
+        })
+        new_user_id = user_auth.user.id
+
+        # 2. Criar registro na tabela tb_colaboradores
+        supabase.table("tb_colaboradores").insert({
+            "nome_completo": dados.nome.upper(),
+            "email": dados.email,
+            "telefone": dados.telefone,
+            "id_cargo": dados.id_cargo,
+            "user_id": new_user_id,
+            "id_unidade": ctx['id_unidade'], # Herda a unidade do Gestor
+            "ativo": True
+        }).execute()
+
+        return {"message": "Funcionário cadastrado com sucesso!"}
+
+    except Exception as e:
+        print(f"Erro cadastro func: {e}")
+        raise HTTPException(status_code=400, detail="Erro ao criar funcionário (Email já existe ou dados inválidos).")
