@@ -54,7 +54,7 @@ class PerfilUpdateData(BaseModel):
     nova_senha: str | None = None
 
 class ReposicaoUpdate(BaseModel):
-    presenca: bool | None = None # True=Veio, False=Faltou, None=Pendente
+    presenca: bool | None = None
     observacoes: str | None = None
     
 class TurmaData(BaseModel):
@@ -65,7 +65,6 @@ class TurmaData(BaseModel):
     horario: str
     sala: str
     status: str
-    # Novos campos
     data_inicio: str | None = None
     qtd_aulas: int | None = 0
     data_termino_real: str | None = None
@@ -83,9 +82,9 @@ class NovoAlunoData(BaseModel):
     cpf: str
     senha: str
     turma_codigo: str 
-    celular: str  # Obrigatório para contato
-    telefone: str | None = None # Opcional
-    data_nascimento: str | None = None # Vem do HTML como YYYY-MM-DD
+    celular: str 
+    telefone: str | None = None
+    data_nascimento: str | None = None
 
 class ReposicaoData(BaseModel):
     id_aluno: int
@@ -93,8 +92,8 @@ class ReposicaoData(BaseModel):
     turma_codigo: str
     id_professor: int
     conteudo_aula: str
-    motivo: str | None = None # Agora é opcional
-    observacoes: str | None = None # Agora é opcional
+    motivo: str | None = None
+    observacoes: str | None = None
 
 class InscricaoAulaData(BaseModel):
     nome: str
@@ -136,34 +135,64 @@ def enviar_mensagem_zapi(telefone_destino: str, mensagem_texto: str):
         print(f"Erro Z-API: {e}")
         return False
 
-# --- ROTAS ---
+# --- AUXILIARES LÓGICA ---
 
-# Função auxiliar para calcular data final (1 aula por semana)
 def calcular_previsao(data_inicio_str: str, qtd: int):
-    if not data_inicio_str or not qtd:
-        return None
+    if not data_inicio_str or not qtd: return None
     try:
         dt_inicio = datetime.strptime(data_inicio_str, "%Y-%m-%d")
-        # Subtrai 1 porque a primeira aula conta como a semana 0
         dias_totais = (qtd - 1) * 7 
         dt_fim = dt_inicio + timedelta(days=dias_totais)
         return dt_fim.strftime("%Y-%m-%d")
-    except:
-        return None
+    except: return None
 
-# --- ROTAS DE TURMAS ---
+# --- NOVA FUNÇÃO: CONTEXTO DO USUÁRIO (MULTI-CIDADE) ---
+def get_contexto_usuario(token: str):
+    """
+    Retorna o ID do usuário, ID da Unidade e Nível de Acesso.
+    Essencial para filtrar dados por cidade.
+    """
+    try:
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        
+        # Busca dados extras incluindo a Unidade
+        resp = supabase.table("tb_colaboradores")\
+            .select("id_colaborador, id_unidade, id_cargo, tb_cargos!fk_cargos(nivel_acesso)")\
+            .eq("user_id", user_id)\
+            .single()\
+            .execute()
+            
+        dados = resp.data
+        return {
+            "user_id": user_id,
+            "id_colaborador": dados['id_colaborador'],
+            "id_unidade": dados['id_unidade'], # A CIDADE DO USUÁRIO
+            "nivel": dados['tb_cargos']['nivel_acesso']
+        }
+    except Exception as e:
+        print(f"Erro contexto usuario: {e}")
+        raise HTTPException(status_code=401, detail="Usuário não identificado ou sem unidade configurada.")
+
+# --- ROTAS ---
 
 @app.get("/admin/gerenciar-turmas")
 def admin_listar_turmas_completo(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token) # Pega cidade do usuário
+
     try:
-        # Busca turmas e o nome do professor associado
-        # Usamos !inner ou left join implicito
-        response = supabase.table("tb_turmas")\
+        # Query base
+        query = supabase.table("tb_turmas")\
             .select("*, tb_colaboradores(nome_completo)")\
-            .order("codigo_turma")\
-            .execute()
-        return response.data
+            .order("codigo_turma")
+        
+        # FILTRO DE CIDADE: Se não for Diretor (Nível 9 ou 10), vê só a sua cidade
+        if ctx['nivel'] < 9:
+            query = query.eq("id_unidade", ctx['id_unidade'])
+            
+        return query.execute().data
     except Exception as e:
         print(f"Erro listar turmas: {e}")
         return []
@@ -171,8 +200,10 @@ def admin_listar_turmas_completo(authorization: str = Header(None)):
 @app.post("/admin/salvar-turma")
 def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
     try:
-        # Calcula previsão automática
         previsao = calcular_previsao(dados.data_inicio, dados.qtd_aulas)
 
         supabase.table("tb_turmas").insert({
@@ -185,8 +216,9 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
             "status": dados.status,
             "data_inicio": dados.data_inicio,
             "qtd_aulas": dados.qtd_aulas,
-            "previsao_termino": previsao, # Salva o cálculo
-            "data_termino_real": dados.data_termino_real
+            "previsao_termino": previsao,
+            "data_termino_real": dados.data_termino_real,
+            "id_unidade": ctx['id_unidade'] # SALVA NA CIDADE DO USUÁRIO
         }).execute()
         return {"message": "Turma criada!"}
     except Exception as e:
@@ -195,8 +227,8 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
 @app.put("/admin/editar-turma/{codigo_original}")
 def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    # Na edição, não mudamos a unidade (a turma continua onde nasceu)
     try:
-        # Recalcula previsão ao editar
         previsao = calcular_previsao(dados.data_inicio, dados.qtd_aulas)
 
         supabase.table("tb_turmas").update({
@@ -208,7 +240,7 @@ def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: st
             "status": dados.status,
             "data_inicio": dados.data_inicio,
             "qtd_aulas": dados.qtd_aulas,
-            "previsao_termino": previsao, # Atualiza o cálculo
+            "previsao_termino": previsao,
             "data_termino_real": dados.data_termino_real
         }).eq("codigo_turma", codigo_original).execute()
         return {"message": "Turma atualizada!"}
@@ -217,51 +249,44 @@ def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: st
 
 @app.get("/admin/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Token ausente")
+    if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
         
-        # --- BUSCA COM CAMPOS EXTRAS ---
         response = supabase.table("tb_colaboradores")\
-            .select("id_colaborador, nome_completo, telefone, email, id_cargo, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
+            .select("id_colaborador, nome_completo, telefone, email, id_cargo, id_unidade, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
             .eq("user_id", user_id)\
             .eq("ativo", True)\
             .execute()
             
         if not response.data:
-            raise HTTPException(status_code=403, detail="Usuário não é um colaborador ativo.")
+            raise HTTPException(status_code=403, detail="Colaborador inativo.")
         
         funcionario = response.data[0]
         
         return {
-            "id_colaborador": funcionario['id_colaborador'], # IMPORTANTE
+            "id_colaborador": funcionario['id_colaborador'],
             "nome": funcionario['nome_completo'],
-            "telefone": funcionario['telefone'], # IMPORTANTE
-            "email_contato": funcionario['email'], # IMPORTANTE
+            "telefone": funcionario['telefone'],
+            "email_contato": funcionario['email'],
             "cargo": funcionario['tb_cargos']['nome_cargo'],
-            "nivel": funcionario['tb_cargos']['nivel_acesso']
+            "nivel": funcionario['tb_cargos']['nivel_acesso'],
+            "unidade": funcionario['id_unidade'] # Retorna a unidade também
         }
     except Exception as e:
-        print(f"Erro ao buscar dados do funcionário: {e}")
-        raise HTTPException(status_code=403, detail="Acesso negado ou erro interno")
+        print(f"Erro dados func: {e}")
+        raise HTTPException(status_code=403, detail="Erro interno")
 
 @app.post("/admin/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token) # Pega contexto (unidade e id_colaborador)
     
     try:
-        # 1. Identificar quem está cadastrando (o Vendedor)
-        token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        user_id_logado = user.user.id
-        
-        resp_colab = supabase.table("tb_colaboradores").select("id_colaborador").eq("user_id", user_id_logado).execute()
-        id_vendedor_atual = resp_colab.data[0]['id_colaborador'] if resp_colab.data else None
-
-        # 2. Criar usuário no Auth do Supabase (Login)
+        # 1. Criar Auth
         user_auth = supabase.auth.admin.create_user({
             "email": dados.email,
             "password": dados.senha,
@@ -269,32 +294,30 @@ def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None
         })
         new_user_id = user_auth.user.id
 
-        # 3. Formatar data de nascimento para 8 caracteres (YYYYMMDD) se houver
         nasc_formatado = None
         if dados.data_nascimento:
             nasc_formatado = dados.data_nascimento.replace("-", "")[:8]
 
-        # 4. Inserir na tabela de Alunos (Dados Completos)
+        # 2. Inserir Aluno (COM UNIDADE)
         aluno_resp = supabase.table("tb_alunos").insert({
             "nome_completo": dados.nome,
             "cpf": dados.cpf,
-            "email": dados.email, # Se tiver coluna email na tb_alunos, senão remova essa linha
+            "email": dados.email,
             "celular": dados.celular,
             "telefone": dados.telefone,
             "data_nascimento": nasc_formatado,
-            "user_id": new_user_id
+            "user_id": new_user_id,
+            "id_unidade": ctx['id_unidade'] # O aluno pertence à cidade de quem cadastrou
         }).execute()
         
-        if not aluno_resp.data:
-            raise Exception("Erro ao inserir dados do aluno")
-
+        if not aluno_resp.data: raise Exception("Erro ao inserir aluno")
         novo_id_aluno = aluno_resp.data[0]['id_aluno']
 
-        # 5. Inserir na tabela de Matrículas (Com Vendedor)
+        # 3. Matrícula
         supabase.table("tb_matriculas").insert({
             "id_aluno": novo_id_aluno,
             "codigo_turma": dados.turma_codigo,
-            "id_vendedor": id_vendedor_atual, # Grava quem vendeu
+            "id_vendedor": ctx['id_colaborador'],
             "status_financeiro": "Ok"
         }).execute()
 
@@ -302,35 +325,38 @@ def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None
 
     except Exception as e:
         print(f"Erro cadastro: {e}")
-        # Se der erro, tenta limpar o usuário criado no Auth para não ficar "morto"
-        # (Opcional, mas boa prática)
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/admin/listar-alunos")
-def admin_listar_alunos():
+def admin_listar_alunos(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
     try:
-        response = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro)").execute()
-        return response.data
+        query = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro)")
+        
+        # Filtro de Cidade
+        if ctx['nivel'] < 9:
+            query = query.eq("id_unidade", ctx['id_unidade'])
+
+        return query.execute().data
     except: return []
 
 @app.post("/admin/agendar-reposicao")
 def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
-    
+    # Reposição não tem id_unidade direto, ela herda da Turma ou Aluno
+    # Mas a verificação de conflito deve ser global ou por prof (que já filtra implicitamente)
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
-        # --- 1. PREPARAR DADOS DA REPOSIÇÃO ---
-        # Converte string para objeto de data/hora
-        # Formato esperado do HTML: "2024-02-20T14:30"
         dt_repo_inicio = datetime.strptime(dados.data_hora, "%Y-%m-%dT%H:%M")
-        # Reposição dura 1 Hora
         dt_repo_fim = dt_repo_inicio + timedelta(hours=1) 
 
-        # --- 2. VERIFICAR CONFLITOS COM TURMAS DO PROFESSOR ---
-        # Busca todas as turmas ATIVAS deste professor
+        # --- VERIFICAR CONFLITOS ---
         resp_turmas = supabase.table("tb_turmas")\
             .select("*")\
             .eq("id_professor", dados.id_professor)\
@@ -338,38 +364,27 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
             .execute()
 
         for turma in resp_turmas.data:
-            # Pula se faltar dados essenciais
-            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']:
-                continue
+            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']: continue
 
-            # 2.1 - Calcular data da primeira aula (ajustando dia da semana)
             dt_inicio_turma = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
             dia_alvo = DIAS_MAPA.get(turma['dia_semana'].split("-")[0].strip(), 0)
             dias_diff = (dia_alvo - dt_inicio_turma.weekday() + 7) % 7
             dt_aula_atual = dt_inicio_turma + timedelta(days=dias_diff)
 
-            # 2.2 - Pegar hora da aula (Ex: "14:00")
-            hora_str = turma['horario'].split("-")[0].strip() # Pega só o inicio
+            hora_str = turma['horario'].split("-")[0].strip()
             hora_h, hora_m = map(int, hora_str.split(":"))
 
-            # 2.3 - Varrer todas as aulas dessa turma
             for _ in range(turma['qtd_aulas']):
-                # Monta o DateTime exato desta aula
                 inicio_aula = dt_aula_atual.replace(hour=hora_h, minute=hora_m)
-                # Aula de Curso dura 2h 30min
                 fim_aula = inicio_aula + timedelta(hours=2, minutes=30)
 
-                # 2.4 - A LÓGICA DE COLISÃO
-                # (InicioRepo < FimAula) E (FimRepo > InicioAula)
                 if (dt_repo_inicio < fim_aula) and (dt_repo_fim > inicio_aula):
-                    # CONFLITO DETECTADO!
-                    msg_erro = f"Conflito! O Prof. já tem aula da turma {turma['codigo_turma']} neste horário ({inicio_aula.strftime('%d/%m %H:%M')} às {fim_aula.strftime('%H:%M')})."
+                    msg_erro = f"Conflito! O Prof. já tem aula da turma {turma['codigo_turma']} neste horário."
                     raise HTTPException(status_code=409, detail=msg_erro)
 
-                # Avança para a próxima semana
                 dt_aula_atual += timedelta(days=7)
 
-        # --- 3. SE NÃO HOUVE CONFLITO, SALVA ---
+        # Salvar Reposição
         supabase.table("tb_reposicoes").insert({
             "id_aluno": dados.id_aluno,
             "data_reposicao": dados.data_hora,
@@ -385,8 +400,7 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
         
         return {"message": "Reposição agendada com sucesso!"}
 
-    except HTTPException as he:
-        raise he # Repassa o erro de conflito para o front
+    except HTTPException as he: raise he
     except Exception as e:
         print(f"Erro reposição: {e}")
         raise HTTPException(status_code=400, detail="Erro interno ao agendar.")
@@ -394,18 +408,33 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
 @app.get("/admin/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token) # Para saber a cidade
+
     try:
         eventos = []
 
-        # --- 1. BUSCAR REPOSIÇÕES ---
-        # Query segura que traz os dados mesmo se professor/aluno forem nulos
-        resp_repo = supabase.table("tb_reposicoes")\
-            .select("id, data_reposicao, motivo, observacoes, presenca, conteudo_aula, codigo_turma, arquivo_assinatura, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
-            .execute()
+        # --- 1. BUSCAR REPOSIÇÕES (Filtrado por cidade via Aluno ou Turma) ---
+        # Como tb_reposicoes nao tem id_unidade, filtramos depois ou fazemos join complexo.
+        # Solução simples: Buscamos e filtramos no Python se necessario, 
+        # mas idealmente tb_reposicoes deveria ter id_unidade ou filtrar pelos alunos da unidade.
+        
+        # Vamos buscar os IDs de alunos desta unidade primeiro
+        if ctx['nivel'] < 9:
+            alunos_unidade = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
+            ids_permitidos = [a['id_aluno'] for a in alunos_unidade.data]
+            
+            resp_repo = supabase.table("tb_reposicoes")\
+                .select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+                .in_("id_aluno", ids_permitidos)\
+                .execute()
+        else:
+            resp_repo = supabase.table("tb_reposicoes")\
+                .select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+                .execute()
         
         for rep in resp_repo.data:
-            # Tratamento de segurança para nomes (Evita erro se for None/Null)
-            nome_aluno = "Aluno (Removido)"
+            nome_aluno = "Aluno?"
             if rep.get('tb_alunos') and rep['tb_alunos'].get('nome_completo'):
                 nome_aluno = rep['tb_alunos']['nome_completo']
             elif rep.get('id_aluno'):
@@ -421,75 +450,57 @@ def admin_agenda(authorization: str = Header(None)):
                 "start": rep['data_reposicao'],
                 "color": "#ff4d4d",
                 "tipo": "reposicao",
-                # DADOS EXTRAS PARA O MODAL COMPLETO:
                 "nome_aluno": nome_aluno,
                 "nome_prof": nome_prof,
                 "conteudo": rep['conteudo_aula'],
                 "turma": rep['codigo_turma'],
                 "presenca": rep['presenca'],
                 "observacoes": rep['observacoes'],
-                "arquivo": rep['arquivo_assinatura'] # Link do arquivo se existir
+                "arquivo": rep['arquivo_assinatura']
             })
 
         # --- 2. BUSCAR TURMAS (Aulas Recorrentes) ---
-        try:
-            resp_turmas = supabase.table("tb_turmas")\
-                .select("codigo_turma, nome_curso, dia_semana, horario, data_inicio, qtd_aulas, tb_colaboradores(nome_completo)")\
-                .in_("status", ["Em Andamento", "Planejada"])\
-                .execute()
+        query_turmas = supabase.table("tb_turmas")\
+            .select("*, tb_colaboradores(nome_completo)")\
+            .in_("status", ["Em Andamento", "Planejada"])
+            
+        if ctx['nivel'] < 9:
+            query_turmas = query_turmas.eq("id_unidade", ctx['id_unidade'])
+            
+        resp_turmas = query_turmas.execute()
 
-            for turma in resp_turmas.data:
-                # Se faltar dados vitais para o calendário, pula essa turma
-                if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']: 
-                    continue
+        for turma in resp_turmas.data:
+            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']: continue
+            
+            try:
+                dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
+                dia_str = turma['dia_semana'].split("-")[0].strip()
+                dia_alvo = DIAS_MAPA.get(dia_str, 0) 
+                dias_diff = (dia_alvo - dt_inicio.weekday() + 7) % 7
+                dt_atual = dt_inicio + timedelta(days=dias_diff)
+                hora_ini = turma['horario'].split("-")[0].strip()
                 
-                try:
-                    dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
-                    
-                    # Identifica o dia da semana (Segunda=0, ... Domingo=6)
-                    dia_str = turma['dia_semana'].split("-")[0].strip()
-                    dia_alvo = DIAS_MAPA.get(dia_str, 0) 
-                    
-                    # Ajusta a data de início para cair no dia da semana correto
-                    dias_diff = (dia_alvo - dt_inicio.weekday() + 7) % 7
-                    dt_atual = dt_inicio + timedelta(days=dias_diff)
-                    
-                    hora_ini = turma['horario'].split("-")[0].strip()
-                    
-                    nome_prof_t = "Sem Prof"
-                    if turma.get('tb_colaboradores') and turma['tb_colaboradores'].get('nome_completo'):
-                        nome_prof_t = turma['tb_colaboradores']['nome_completo']
+                nome_prof_t = "Sem Prof"
+                if turma.get('tb_colaboradores'): nome_prof_t = turma['tb_colaboradores']['nome_completo']
 
-                    # Gera as N aulas
-                    for i in range(turma['qtd_aulas']):
-                        # Formata para ISO (YYYY-MM-DDTHH:MM:SS)
-                        start_iso = f"{dt_atual.strftime('%Y-%m-%d')}T{hora_ini}:00"
-                        
-                        eventos.append({
-                            "id": f"aula-{turma['codigo_turma']}-{i}", # ID virtual
-                            "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof_t})",
-                            "start": start_iso,
-                            "color": "#0088cc", # Azul
-                            "tipo": "aula"
-                        })
-                        # Avança 1 semana
-                        dt_atual += timedelta(days=7)
-                except Exception as e_loop:
-                    print(f"Erro ao processar turma {turma.get('codigo_turma')}: {e_loop}")
-                    continue
-
-        except Exception as e_turma:
-            print(f"Erro geral ao buscar turmas: {e_turma}")
-            # Não para o código, apenas loga e segue entregando as reposições
+                for i in range(turma['qtd_aulas']):
+                    start_iso = f"{dt_atual.strftime('%Y-%m-%d')}T{hora_ini}:00"
+                    eventos.append({
+                        "id": f"aula-{turma['codigo_turma']}-{i}",
+                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof_t})",
+                        "start": start_iso,
+                        "color": "#0088cc",
+                        "tipo": "aula"
+                    })
+                    dt_atual += timedelta(days=7)
+            except: continue
 
         return eventos
 
     except Exception as e:
-        print(f"Erro CRÍTICO na agenda: {e}")
-        # Retorna lista vazia para não quebrar o site
+        print(f"Erro agenda: {e}")
         return []
         
-# ---ATUALIZAR REPOSIÇÃO ---
 @app.patch("/admin/reposicao/{id_repo}")
 def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -505,56 +516,152 @@ def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str
 @app.put("/admin/reposicao-completa/{id_repo}")
 def atualizar_reposicao_completa(
     id_repo: str,
-    presenca: str = Form(...),      # Recebe como string "true"/"false"
+    presenca: str = Form(...),
     observacoes: str = Form(None),
-    arquivo: UploadFile = File(None), # Arquivo é opcional
+    arquivo: UploadFile = File(None),
     authorization: str = Header(None)
 ):
     if not authorization: raise HTTPException(status_code=401)
-    
     try:
-        # Converter presença para Booleano ou None
         presenca_bool = None
         if presenca == "true": presenca_bool = True
         elif presenca == "false": presenca_bool = False
 
-        updates = {
-            "presenca": presenca_bool,
-            "observacoes": observacoes
-        }
+        updates = { "presenca": presenca_bool, "observacoes": observacoes }
 
-        # --- LÓGICA DE UPLOAD ---
         if arquivo:
-            file_content = arquivo.file.read() # CORREÇÃO: read síncrono
+            file_content = arquivo.file.read()
             file_ext = arquivo.filename.split('.')[-1]
-            file_path = f"assinatura_{id_repo}.{file_ext}" # Nome único
+            file_path = f"assinatura_{id_repo}.{file_ext}" 
             
-            # Envia para o Supabase Storage
-            # bucket 'listas-chamada' deve existir
             supabase.storage.from_("listas-chamada").upload(
-                file_path, 
-                file_content, 
-                file_options={"content-type": arquivo.content_type, "upsert": "true"}
+                file_path, file_content, file_options={"content-type": arquivo.content_type, "upsert": "true"}
             )
-            
-            # Pega URL Pública
             public_url = supabase.storage.from_("listas-chamada").get_public_url(file_path)
             updates["arquivo_assinatura"] = public_url
 
-        # Atualiza no Banco
         supabase.table("tb_reposicoes").update(updates).eq("id", id_repo).execute()
-        
-        return {"message": "Dados e arquivo atualizados!"}
-
+        return {"message": "Atualizado!"}
     except Exception as e:
         print(f"Erro upload: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/meus-cursos-permitidos")
-def get_cursos_permitidos(authorization: str = Header(None)):
+# --- NOVAS ROTAS CRM (Com Filtro de Cidade) ---
+
+@app.get("/admin/leads-crm")
+def get_leads_crm(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token) # Pega cidade
+    
+    try:
+        # Filtra leads pela cidade do vendedor logado
+        query = supabase.table("inscricoes").select("*").order("created_at", desc=True)
+        if ctx['nivel'] < 9:
+            query = query.eq("id_unidade", ctx['id_unidade'])
+            
+        leads = query.execute().data
+
+        # Comparação com CPFs também deve ser filtrada? Não necessariamente, mas ajuda performance
+        resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
+        cpfs_alunos = set()
+        for a in resp_alunos.data:
+            if a.get('cpf'):
+                cpfs_alunos.add( ''.join(filter(str.isdigit, a['cpf'])) )
+
+        resultado = []
+        for lead in leads:
+            cpf_lead_limpo = ''.join(filter(str.isdigit, lead.get('cpf', '') or ''))
+            is_aluno = cpf_lead_limpo in cpfs_alunos and cpf_lead_limpo != ''
+            
+            resultado.append({
+                "id": lead['id'],
+                "nome": lead['nome'],
+                "cpf": lead.get('cpf', '---'),
+                "whatsapp": lead['whatsapp'],
+                "workshop": lead['workshop'],
+                "data_agendada": lead['data_agendada'],
+                "status": lead.get('status', 'Pendente'),
+                "vendedor": lead.get('vendedor', '---'),
+                "ja_e_aluno": is_aluno
+            })
+        return resultado
+    except Exception as e:
+        print(f"Erro CRM: {e}")
+        raise HTTPException(status_code=500, detail="Erro CRM")
+
+@app.patch("/admin/leads-crm/{id_inscricao}")
+def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
-        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        
+        resp_colab = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", user_id).execute()
+        if not resp_colab.data: raise HTTPException(status_code=403)
+            
+        nome_vendedor = resp_colab.data[0]['nome_completo']
+
+        supabase.table("inscricoes").update({
+            "status": dados.status,
+            "vendedor": nome_vendedor
+        }).eq("id", id_inscricao).execute()
+        
+        return {"message": "Status atualizado"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/admin/meus-dados")
+def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+
+        updates_tabela = {}
+        if dados.nome: updates_tabela["nome_completo"] = dados.nome.upper()
+        if dados.telefone: updates_tabela["telefone"] = dados.telefone
+        if dados.email_contato: updates_tabela["email"] = dados.email_contato
+            
+        if updates_tabela:
+            supabase.table("tb_colaboradores").update(updates_tabela).eq("user_id", user_id).execute()
+
+        updates_auth = {}
+        if dados.email_login: updates_auth["email"] = dados.email_login
+        if dados.nova_senha and len(dados.nova_senha) >= 6: updates_auth["password"] = dados.nova_senha
+            
+        if updates_auth: supabase.auth.update_user(updates_auth)
+
+        return {"message": "Perfil atualizado!"}
+    except Exception as e:
+        print(f"Erro perfil: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno")
+        
+@app.get("/admin/listar-professores")
+def admin_listar_professores(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    try:
+        # Filtra professores pela unidade do usuário (exceto Diretores)
+        query = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6)
+        if ctx['nivel'] < 9:
+            query = query.eq("id_unidade", ctx['id_unidade'])
+            
+        return query.execute().data
+    except: return []
+
+# Listar Turmas para Selects (Cadastro Aluno) - Com filtro
+@app.get("/admin/listar-turmas")
+def admin_listar_turmas(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    try:
+        query = supabase.table("tb_turmas").select("*")
+        if ctx['nivel'] < 9:
+            query = query.eq("id_unidade", ctx['id_unidade'])
+        return query.execute().data
+    except: return []
