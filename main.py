@@ -46,6 +46,12 @@ ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_
 
 # --- MODELOS DE DADOS ---
 
+class FuncionarioEdicaoData(BaseModel):
+    nome: str | None = None
+    telefone: str | None = None
+    id_cargo: int | None = None
+    ativo: bool | None = None
+
 class PerfilUpdateData(BaseModel):
     nome: str | None = None
     telefone: str | None = None
@@ -179,6 +185,7 @@ def get_contexto_usuario(token: str):
 # --- ROTAS ---
 
 # 1. GESTÃO DE EQUIPE (RH)
+
 @app.get("/admin/listar-cargos")
 def admin_listar_cargos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -243,6 +250,32 @@ def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str =
     except Exception as e:
         print(f"Erro cadastro func: {e}")
         raise HTTPException(status_code=400, detail="Erro ao criar funcionário.")
+
+# --- Rota de Edição ---
+@app.put("/admin/editar-funcionario/{id_colaborador}")
+def admin_editar_funcionario(id_colaborador: int, dados: FuncionarioEdicaoData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # Apenas Gerentes (8+) podem editar
+    if ctx['nivel'] < 8:
+        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
+
+    try:
+        updates = {}
+        if dados.nome: updates["nome_completo"] = dados.nome.upper()
+        if dados.telefone: updates["telefone"] = dados.telefone
+        if dados.id_cargo: updates["id_cargo"] = dados.id_cargo
+        if dados.ativo is not None: updates["ativo"] = dados.ativo
+
+        if updates:
+            supabase.table("tb_colaboradores").update(updates).eq("id_colaborador", id_colaborador).execute()
+
+        return {"message": "Funcionário atualizado com sucesso!"}
+    except Exception as e:
+        print(f"Erro update func: {e}")
+        raise HTTPException(status_code=400, detail="Erro ao atualizar funcionário.")
 
 # 2. GESTÃO DE TURMAS
 @app.get("/admin/gerenciar-turmas")
@@ -759,5 +792,6 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                     liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
+
 
 
