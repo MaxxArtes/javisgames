@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from supabase import create_client, Client
 import requests 
 from datetime import datetime, timedelta
+from fastapi import UploadFile, File, Form
+import shutil
 
 # Dicionário para traduzir dia da semana em número (0 = Segunda, 6 = Domingo)
 DIAS_MAPA = {
@@ -397,8 +399,11 @@ def admin_agenda(authorization: str = Header(None)):
         # --- 1. BUSCAR REPOSIÇÕES ---
         # Query segura que traz os dados mesmo se professor/aluno forem nulos
         resp_repo = supabase.table("tb_reposicoes")\
-            .select("id, data_reposicao, motivo, observacoes, presenca, id_aluno, id_professor, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
+            .select("id, data_reposicao, motivo, observacoes, presenca, conteudo_aula, codigo_turma, arquivo_assinatura, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")\
             .execute()
+        for rep in resp_repo.data:
+            nome_aluno = rep['tb_alunos']['nome_completo'] if rep.get('tb_alunos') else "Aluno"
+            nome_prof = rep['tb_colaboradores']['nome_completo'] if rep.get('tb_colaboradores') else "?"
         
         for rep in resp_repo.data:
             # Tratamento de segurança para nomes (Evita erro se for None/Null)
@@ -414,12 +419,18 @@ def admin_agenda(authorization: str = Header(None)):
             
             eventos.append({
                 "id": rep['id'],
-                "title": f"🔄 Reposição: {nome_aluno} ({nome_prof})",
+                "title": f"🔄 Reposição: {nome_aluno}",
                 "start": rep['data_reposicao'],
-                "color": "#ff4d4d", # Vermelho
+                "color": "#ff4d4d",
                 "tipo": "reposicao",
-                "presenca": rep.get('presenca'),      
-                "observacoes": rep.get('observacoes')
+                # DADOS EXTRAS PARA O MODAL COMPLETO:
+                "nome_aluno": nome_aluno,
+                "nome_prof": nome_prof,
+                "conteudo": rep['conteudo_aula'],
+                "turma": rep['codigo_turma'],
+                "presenca": rep['presenca'],
+                "observacoes": rep['observacoes'],
+                "arquivo": rep['arquivo_assinatura'] # Link do arquivo se existir
             })
 
         # --- 2. BUSCAR TURMAS (Aulas Recorrentes) ---
@@ -479,6 +490,7 @@ def admin_agenda(authorization: str = Header(None)):
         print(f"Erro CRÍTICO na agenda: {e}")
         # Retorna lista vazia para não quebrar o site
         return []
+        
 # ---ATUALIZAR REPOSIÇÃO ---
 @app.patch("/admin/reposicao/{id_repo}")
 def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
@@ -491,6 +503,54 @@ def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str
         return {"message": "Atualizado!"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/admin/reposicao-completa/{id_repo}")
+def atualizar_reposicao_completa(
+    id_repo: str,
+    presenca: str = Form(...),      # Recebe como string "true"/"false"
+    observacoes: str = Form(None),
+    arquivo: UploadFile = File(None), # Arquivo é opcional
+    authorization: str = Header(None)
+):
+    if not authorization: raise HTTPException(status_code=401)
+    
+    try:
+        # Converter presença para Booleano ou None
+        presenca_bool = None
+        if presenca == "true": presenca_bool = True
+        elif presenca == "false": presenca_bool = False
+
+        updates = {
+            "presenca": presenca_bool,
+            "observacoes": observacoes
+        }
+
+        # --- LÓGICA DE UPLOAD ---
+        if arquivo:
+            file_content = await arquivo.read()
+            file_ext = arquivo.filename.split('.')[-1]
+            file_path = f"assinatura_{id_repo}.{file_ext}" # Nome único
+            
+            # Envia para o Supabase Storage
+            # bucket 'listas-chamada' deve existir
+            supabase.storage.from_("listas-chamada").upload(
+                file_path, 
+                file_content, 
+                file_options={"content-type": arquivo.content_type, "upsert": "true"}
+            )
+            
+            # Pega URL Pública
+            public_url = supabase.storage.from_("listas-chamada").get_public_url(file_path)
+            updates["arquivo_assinatura"] = public_url
+
+        # Atualiza no Banco
+        supabase.table("tb_reposicoes").update(updates).eq("id", id_repo).execute()
+        
+        return {"message": "Dados e arquivo atualizados!"}
+
+    except Exception as e:
+        print(f"Erro upload: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
@@ -799,6 +859,7 @@ def admin_listar_professores(authorization: str = Header(None)):
         resp = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6).execute()
         return resp.data
     except: return []
+
 
 
 
