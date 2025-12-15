@@ -178,7 +178,7 @@ def get_contexto_usuario(token: str):
 
 # --- ROTAS ---
 
-# 1. GESTÃO DE EQUIPE (Essas eram as rotas faltando!)
+# 1. GESTÃO DE EQUIPE (RH)
 @app.get("/admin/listar-cargos")
 def admin_listar_cargos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -193,7 +193,7 @@ def admin_listar_equipe(authorization: str = Header(None)):
     ctx = get_contexto_usuario(token)
 
     if ctx['nivel'] < 4:
-        raise HTTPException(status_code=403, detail="Acesso restrito.")
+        raise HTTPException(status_code=403, detail="Acesso restrito à gestão.")
 
     try:
         query = supabase.table("tb_colaboradores").select("*, tb_cargos(nome_cargo, nivel_acesso)").order("nome_completo")
@@ -211,7 +211,7 @@ def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str =
     ctx = get_contexto_usuario(token)
 
     if ctx['nivel'] < 4:
-        raise HTTPException(status_code=403, detail="Sem permissão.")
+        raise HTTPException(status_code=403, detail="Você não tem permissão para cadastrar funcionários.")
 
     try:
         user_auth = supabase.auth.admin.create_user({
@@ -511,6 +511,14 @@ def atualizar_reposicao_completa(id_repo: str, presenca: str = Form(...), observ
         return {"message": "Atualizado!"}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/admin/reposicao/{id_repo}")
+def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        supabase.table("tb_reposicoes").update({"presenca": dados.presenca, "observacoes": dados.observacoes}).eq("id", id_repo).execute()
+        return {"message": "OK"}
+    except: raise HTTPException(status_code=400)
+
 # 6. CRM / LEADS
 @app.get("/admin/leads-crm")
 def get_leads_crm(authorization: str = Header(None)):
@@ -521,23 +529,19 @@ def get_leads_crm(authorization: str = Header(None)):
         query = supabase.table("inscricoes").select("*").order("created_at", desc=True)
         if ctx['nivel'] < 9: query = query.eq("id_unidade", ctx['id_unidade'])
         leads = query.execute().data
-
-        resp_alunos = supabase.table("tb_alunos").select("cpf").execute()
-        cpfs_alunos = set()
-        for a in resp_alunos.data:
-            if a.get('cpf'): cpfs_alunos.add(''.join(filter(str.isdigit, a['cpf'])))
-
-        resultado = []
-        for lead in leads:
-            cpf_limpo = ''.join(filter(str.isdigit, lead.get('cpf', '') or ''))
-            is_aluno = cpf_limpo in cpfs_alunos and cpf_limpo != ''
-            resultado.append({
-                "id": lead['id'], "nome": lead['nome'], "cpf": lead.get('cpf', '---'),
-                "whatsapp": lead['whatsapp'], "workshop": lead['workshop'], "data_agendada": lead['data_agendada'],
-                "status": lead.get('status', 'Pendente'), "vendedor": lead.get('vendedor', '---'),
-                "ja_e_aluno": is_aluno
+        
+        alunos = supabase.table("tb_alunos").select("cpf").execute().data
+        cpfs = set(''.join(filter(str.isdigit, a['cpf'])) for a in alunos if a.get('cpf'))
+        
+        res = []
+        for l in leads:
+            cpf_l = ''.join(filter(str.isdigit, l.get('cpf','') or ''))
+            res.append({
+                "id": l['id'], "nome": l['nome'], "cpf": l.get('cpf','-'), "whatsapp": l['whatsapp'],
+                "workshop": l['workshop'], "data_agendada": l['data_agendada'], "status": l.get('status','Pendente'),
+                "vendedor": l.get('vendedor','-'), "ja_e_aluno": (cpf_l in cpfs and cpf_l != '')
             })
-        return resultado
+        return res
     except: raise HTTPException(status_code=500)
 
 @app.patch("/admin/leads-crm/{id_inscricao}")
@@ -545,15 +549,12 @@ def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorizat
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
-    
-    if ctx['nivel'] not in [3, 4, 8, 9, 10]: # Vendedor(3), Coord(4), Gerente(8+)
-        raise HTTPException(status_code=403, detail="Sem permissão.")
-
+    if ctx['nivel'] not in [3, 4, 8, 9, 10]: raise HTTPException(status_code=403)
     try:
         resp = supabase.table("tb_colaboradores").select("nome_completo").eq("user_id", ctx['user_id']).execute()
         nome = resp.data[0]['nome_completo']
         supabase.table("inscricoes").update({ "status": dados.status, "vendedor": nome }).eq("id", id_inscricao).execute()
-        return {"message": "Status atualizado"}
+        return {"message": "OK"}
     except: raise HTTPException(status_code=500)
 
 @app.patch("/admin/meus-dados")
@@ -597,26 +598,156 @@ def admin_listar_professores(authorization: str = Header(None)):
         return query.execute().data
     except: return []
 
-# --- ROTAS ANTIGAS (MANTIDAS PARA O ALUNO) ---
+# --- 7. CHAT & Z-API (RESTAURADOS) ---
+
+@app.get("/chat/historico")
+def get_historico_aluno(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        if not aluno_resp.data: return []
+        id_aluno = aluno_resp.data[0]['id_aluno']
+        msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
+        return msgs.data
+    except Exception as e:
+        print(e)
+        return []
+
+@app.post("/chat/enviar-aluno")
+def enviar_msg_aluno(dados: ChatMensagemData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        if not aluno_resp.data: raise HTTPException(status_code=404)
+        id_aluno = aluno_resp.data[0]['id_aluno']
+        supabase.table("tb_chat").insert({
+            "id_aluno": id_aluno,
+            "mensagem": dados.mensagem,
+            "enviado_por_admin": False
+        }).execute()
+        return {"message": "Enviado"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/admin/chat/conversas-ativas")
+def admin_listar_conversas_ativas(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401, detail="Token ausente")
+    try:
+        token = authorization.split(" ")[1]
+        ctx = get_contexto_usuario(token) # Pega contexto para filtrar por cidade
+
+        lista_alunos_permitidos = []
+        filtrar_por_aluno = False
+
+        # Se for Professor (Nível 5) -> Vê só seus alunos (lógica original)
+        # Se for Coord/Vendedor (Nível < 9) -> Vê alunos da sua UNIDADE
+        
+        if ctx['nivel'] == 5: # Professor
+            turmas_resp = supabase.table("tb_turmas").select("codigo_turma").eq("id_professor", ctx['id_colaborador']).execute()
+            codigos_turmas = [t['codigo_turma'] for t in turmas_resp.data]
+            if not codigos_turmas: return []
+            matriculas_resp = supabase.table("tb_matriculas").select("id_aluno").in_("codigo_turma", codigos_turmas).execute()
+            lista_alunos_permitidos = [m['id_aluno'] for m in matriculas_resp.data]
+            filtrar_por_aluno = True
+            
+        elif ctx['nivel'] < 9: # Coord/Vendedor da unidade
+            alunos_unidade = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
+            lista_alunos_permitidos = [a['id_aluno'] for a in alunos_unidade.data]
+            filtrar_por_aluno = True
+
+        query = supabase.table("tb_chat").select("id_aluno, mensagem, created_at, tb_alunos(nome_completo)").order("created_at", desc=True).limit(300)
+        
+        if filtrar_por_aluno:
+            if not lista_alunos_permitidos: return []
+            query = query.in_("id_aluno", lista_alunos_permitidos)
+            
+        msgs = query.execute()
+        
+        conversas = {}
+        for m in msgs.data:
+            aid = m['id_aluno']
+            if aid not in conversas:
+                conversas[aid] = {
+                    "id_aluno": aid,
+                    "nome": m['tb_alunos']['nome_completo'],
+                    "ultima_msg": m['mensagem'],
+                    "data": m['created_at']
+                }
+        return list(conversas.values())
+
+    except Exception as e:
+        print(f"Erro ao listar conversas: {e}")
+        return []
+
+@app.get("/admin/chat/mensagens/{id_aluno}")
+def admin_ler_mensagens(id_aluno: int):
+    msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
+    return msgs.data
+
+@app.post("/admin/chat/responder")
+def admin_responder(dados: ChatAdminReply):
+    try:
+        supabase.table("tb_chat").insert({
+            "id_aluno": dados.id_aluno,
+            "mensagem": dados.mensagem,
+            "enviado_por_admin": True
+        }).execute()
+        return {"message": "Respondido"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/inscrever-aula")
+def inscrever_aula(dados: InscricaoAulaData):
+    try:
+        numero_admin = "5565981350686"
+        mensagem = f"🎮 *NOVA INSCRIÇÃO*\n👤 {dados.nome}\n📧 {dados.email}\n📱 {dados.telefone}"
+        enviar_mensagem_zapi(numero_admin, mensagem)
+        return {"message": "Sucesso"}
+    except: raise HTTPException(status_code=500)
+
+@app.post("/chat/enviar")
+def enviar_mensagem_chat(dados: MensagemChat):
+    if enviar_mensagem_zapi(dados.telefone, dados.texto):
+        return {"message": "Enviado"}
+    raise HTTPException(status_code=500)
+
+@app.post("/login")
+def realizar_login(dados: LoginData):
+    try:
+        response = supabase.auth.sign_in_with_password({"email": dados.email, "password": dados.password})
+        return {"token": response.session.access_token, "user": { "email": response.user.email }}
+    except: raise HTTPException(status_code=400, detail="Email ou senha incorretos")
+
+@app.post("/recuperar-senha")
+def recuperar_senha(dados: EmailData):
+    try:
+        site_url = "https://www.javisgameacademy.com.br/RedefinirSenha.html" 
+        supabase.auth.reset_password_email(dados.email, options={"redirect_to": site_url})
+        return {"message": "Email enviado"}
+    except: raise HTTPException(status_code=400, detail="Erro ao enviar email.")
+
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
-        user_id = supabase.auth.get_user(token).user.id
-        aluno = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).single().execute()
-        resp = supabase.table("tb_matriculas").select("codigo_turma, data_matricula, tb_turmas(nome_curso)").eq("id_aluno", aluno.data['id_aluno']).execute()
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        if not aluno_resp.data: return {"cursos": []}
+        id_aluno = aluno_resp.data[0]['id_aluno']
+        response = supabase.table("tb_matriculas").select("codigo_turma, data_matricula, tb_turmas(nome_curso)").eq("id_aluno", id_aluno).execute()
         liberados = []
-        for item in resp.data:
+        for item in response.data:
             if item.get('tb_turmas'):
-                nome = item['tb_turmas']['nome_curso']
-                if nome in MAPA_CURSOS: liberados.append({"id": MAPA_CURSOS[nome], "data_inicio": item['data_matricula']})
+                nome_banco = item['tb_turmas']['nome_curso']
+                if nome_banco in MAPA_CURSOS:
+                    liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
-
-@app.post("/login")
-def realizar_login(dados: LoginData):
-    try:
-        res = supabase.auth.sign_in_with_password({"email": dados.email, "password": dados.password})
-        return {"token": res.session.access_token, "user": { "email": res.user.email }}
-    except: raise HTTPException(status_code=400, detail="Login falhou")
