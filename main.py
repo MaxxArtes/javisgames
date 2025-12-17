@@ -849,7 +849,9 @@ def get_dashboard_stats(authorization: str = Header(None)):
         if ctx['nivel'] < 9: q_turmas = q_turmas.eq("id_unidade", ctx['id_unidade'])
         turmas_data = q_turmas.execute().data
         
-        turmas_ativas = sum(1 for t in turmas_data if t['status'] == 'Em Andamento')
+        # CORREÇÃO: Turmas Ativas agora são "Em Andamento" (Vagas) + "Fechada" (Lotada/Sem Vagas)
+        # Ambas estão tendo aula, a diferença é só a matrícula.
+        turmas_ativas = sum(1 for t in turmas_data if t['status'] in ['Em Andamento', 'Fechada'])
         
         # Agrupar cursos para o gráfico
         cursos_map = {}
@@ -870,6 +872,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro dashboard: {e}")
         return {}
+
 
 
 
