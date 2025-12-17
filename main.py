@@ -194,30 +194,35 @@ def admin_listar_cargos(authorization: str = Header(None)):
     except: return []
 
 @app.get("/admin/listar-equipe")
-def admin_listar_equipe(authorization: str = Header(None)):
+def admin_listar_equipe(filtro_unidade: int | None = None, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
 
+    # Apenas Nível 8+ (Gerente) pode ver a lista
     if ctx['nivel'] < 8:
-        raise HTTPException(status_code=403, detail="Acesso restrito à gestão.")
+        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
 
     try:
-        # CORREÇÃO AQUI: Mudamos 'tb_cargos' para 'tb_cargos!fk_cargos'
-        # Isso força o sistema a usar a relação correta.
         query = supabase.table("tb_colaboradores")\
             .select("*, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
             .order("nome_completo")
         
+        # LÓGICA DO FILTRO:
         if ctx['nivel'] < 9: 
+            # Se for Gerente (8) ou menor, FORÇA a ver só a própria unidade
             query = query.eq("id_unidade", ctx['id_unidade'])
+        else:
+            # Se for Diretor (9 ou 10) e escolheu uma cidade, filtra por ela
+            if filtro_unidade:
+                query = query.eq("id_unidade", filtro_unidade)
+            # Se não escolheu nada, mostra tudo (padrão)
             
         return query.execute().data
     except Exception as e:
         print(f"Erro listar equipe: {e}")
-        # Se fk_cargos falhar, tente: tb_cargos!tb_colaboradores_id_cargo_fkey
         return []
-
+        
 @app.post("/admin/cadastrar-funcionario")
 def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -792,6 +797,7 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                     liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
+
 
 
 
