@@ -567,15 +567,28 @@ def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str
 
 # 6. CRM / LEADS
 @app.get("/admin/leads-crm")
-def get_leads_crm(authorization: str = Header(None)):
+def get_leads_crm(filtro_unidade: int | None = None, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
+    
     try:
         query = supabase.table("inscricoes").select("*").order("created_at", desc=True)
-        if ctx['nivel'] < 9: query = query.eq("id_unidade", ctx['id_unidade'])
+        
+        # LÓGICA DO FILTRO:
+        if ctx['nivel'] < 9:
+            # Se for Vendedor/Gerente, VÊ APENAS A SUA UNIDADE
+            query = query.eq("id_unidade", ctx['id_unidade'])
+        else:
+            # Se for Diretor (9+):
+            if filtro_unidade:
+                # Filtra pela cidade escolhida no dropdown
+                query = query.eq("id_unidade", filtro_unidade)
+            # Se não escolheu nada, traz tudo (padrão)
+
         leads = query.execute().data
         
+        # Verifica quem já é aluno (para colocar a badge "ALUNO")
         alunos = supabase.table("tb_alunos").select("cpf").execute().data
         cpfs = set(''.join(filter(str.isdigit, a['cpf'])) for a in alunos if a.get('cpf'))
         
@@ -583,12 +596,21 @@ def get_leads_crm(authorization: str = Header(None)):
         for l in leads:
             cpf_l = ''.join(filter(str.isdigit, l.get('cpf','') or ''))
             res.append({
-                "id": l['id'], "nome": l['nome'], "cpf": l.get('cpf','-'), "whatsapp": l['whatsapp'],
-                "workshop": l['workshop'], "data_agendada": l['data_agendada'], "status": l.get('status','Pendente'),
-                "vendedor": l.get('vendedor','-'), "ja_e_aluno": (cpf_l in cpfs and cpf_l != '')
+                "id": l['id'], 
+                "nome": l['nome'], 
+                "cpf": l.get('cpf','-'), 
+                "whatsapp": l['whatsapp'],
+                "workshop": l['workshop'], 
+                "data_agendada": l['data_agendada'], 
+                "status": l.get('status','Pendente'),
+                "vendedor": l.get('vendedor','-'), 
+                "ja_e_aluno": (cpf_l in cpfs and cpf_l != ''),
+                "id_unidade": l.get('id_unidade') # Retorna a unidade para mostrar na tabela se precisar
             })
         return res
-    except: raise HTTPException(status_code=500)
+    except Exception as e:
+        print(f"Erro CRM: {e}") 
+        raise HTTPException(status_code=500)
 
 @app.patch("/admin/leads-crm/{id_inscricao}")
 def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
@@ -797,6 +819,7 @@ def get_cursos_permitidos(authorization: str = Header(None)):
                     liberados.append({"id": MAPA_CURSOS[nome_banco], "data_inicio": item['data_matricula']})
         return {"cursos": liberados}
     except: return {"cursos": []}
+
 
 
 
