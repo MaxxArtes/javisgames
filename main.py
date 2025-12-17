@@ -828,7 +828,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
     ctx = get_contexto_usuario(token)
     
     try:
-        # 1. CRM / LEADS
+        # 1. CRM
         q_leads = supabase.table("inscricoes").select("status", count="exact")
         if ctx['nivel'] < 9: q_leads = q_leads.eq("id_unidade", ctx['id_unidade'])
         leads_data = q_leads.execute().data
@@ -840,7 +840,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
         total_leads = len(leads_data)
         taxa_conversao = (matriculados / total_leads * 100) if total_leads > 0 else 0
 
-        # 2. ALUNOS E TURMAS
+        # 2. ESCOLA
         q_alunos = supabase.table("tb_alunos").select("id_aluno", count="exact")
         if ctx['nivel'] < 9: q_alunos = q_alunos.eq("id_unidade", ctx['id_unidade'])
         total_alunos = q_alunos.execute().count
@@ -849,18 +849,15 @@ def get_dashboard_stats(authorization: str = Header(None)):
         if ctx['nivel'] < 9: q_turmas = q_turmas.eq("id_unidade", ctx['id_unidade'])
         turmas_data = q_turmas.execute().data
         
-        # CORREÇÃO: Turmas Ativas agora são "Em Andamento" (Vagas) + "Fechada" (Lotada/Sem Vagas)
-        # Ambas estão tendo aula, a diferença é só a matrícula.
+        # Considera ativas: Em Andamento (Vagas) + Fechada (Lotada)
         turmas_ativas = sum(1 for t in turmas_data if t['status'] in ['Em Andamento', 'Fechada'])
         
-        # Agrupar cursos para o gráfico
         cursos_map = {}
         for t in turmas_data:
             nome = t.get('nome_curso', 'Outros')
             cursos_map[nome] = cursos_map.get(nome, 0) + 1
 
-        # 3. REPOSIÇÕES PENDENTES
-        # (Aqui pegamos geral, mas idealmente filtraria por unidade se tiver como relacionar)
+        # 3. REPOSIÇÕES
         repo_count = supabase.table("tb_reposicoes").select("id", count="exact").eq("status", "Agendada").execute().count
 
         return {
