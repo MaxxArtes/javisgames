@@ -423,10 +423,13 @@ def admin_listar_alunos(authorization: str = Header(None)):
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
     try:
-        query = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro)")
+        # Agora buscamos também o 'tipo_turma' dentro de tb_turmas, através da matrícula
+        query = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro, tb_turmas(tipo_turma))")
         if ctx['nivel'] < 9: query = query.eq("id_unidade", ctx['id_unidade'])
         return query.execute().data
-    except: return []
+    except Exception as e: 
+        print(f"Erro listar alunos: {e}")
+        return []
 
 # 5. REPOSIÇÕES E AGENDA
 @app.post("/admin/agendar-reposicao")
@@ -872,3 +875,4 @@ def get_dashboard_stats(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro dashboard: {e}")
         return {}
+
