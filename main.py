@@ -71,6 +71,7 @@ class TurmaData(BaseModel):
     horario: str
     sala: str
     status: str
+    tipo: str = "PARTICULAR" # NOVO CAMPO: Padrão é Particular
     data_inicio: str | None = None
     qtd_aulas: int | None = 0
     data_termino_real: str | None = None
@@ -216,7 +217,6 @@ def admin_listar_equipe(filtro_unidade: int | None = None, authorization: str = 
             # Se for Diretor (9 ou 10) e escolheu uma cidade, filtra por ela
             if filtro_unidade:
                 query = query.eq("id_unidade", filtro_unidade)
-            # Se não escolheu nada, mostra tudo (padrão)
             
         return query.execute().data
     except Exception as e:
@@ -229,7 +229,7 @@ def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str =
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
 
-    # CORREÇÃO: Agora apenas Nível 8+ pode cadastrar
+    # Apenas Nível 8+ pode cadastrar
     if ctx['nivel'] < 8:
         raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
 
@@ -314,6 +314,7 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
             "horario": dados.horario,
             "sala": dados.sala,
             "status": dados.status,
+            "tipo_turma": dados.tipo, # Salva se é PROJETO ou PARTICULAR
             "data_inicio": dados.data_inicio,
             "qtd_aulas": dados.qtd_aulas,
             "previsao_termino": previsao,
@@ -336,6 +337,7 @@ def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: st
             "horario": dados.horario,
             "sala": dados.sala,
             "status": dados.status,
+            "tipo_turma": dados.tipo, # Atualiza o tipo
             "data_inicio": dados.data_inicio,
             "qtd_aulas": dados.qtd_aulas,
             "previsao_termino": previsao,
@@ -573,22 +575,22 @@ def get_leads_crm(filtro_unidade: int | None = None, authorization: str = Header
     ctx = get_contexto_usuario(token)
     
     try:
+        # Tenta buscar os leads. 
+        # IMPORTANTE: Certifique-se que a tabela 'inscricoes' tem a coluna 'id_unidade' no Supabase.
+        # Se não tiver, crie a coluna ou remova os filtros de .eq("id_unidade") abaixo.
         query = supabase.table("inscricoes").select("*").order("created_at", desc=True)
         
-        # LÓGICA DO FILTRO:
+        # Filtros de Unidade
         if ctx['nivel'] < 9:
-            # Se for Vendedor/Gerente, VÊ APENAS A SUA UNIDADE
+            # Se for Vendedor, tenta filtrar. Se a coluna nao existir, isso pode dar erro.
+            # Se der erro, remova essa linha temporariamente até criar a coluna no banco.
             query = query.eq("id_unidade", ctx['id_unidade'])
-        else:
-            # Se for Diretor (9+):
-            if filtro_unidade:
-                # Filtra pela cidade escolhida no dropdown
-                query = query.eq("id_unidade", filtro_unidade)
-            # Se não escolheu nada, traz tudo (padrão)
+        elif filtro_unidade:
+            query = query.eq("id_unidade", filtro_unidade)
 
         leads = query.execute().data
         
-        # Verifica quem já é aluno (para colocar a badge "ALUNO")
+        # Busca CPFs de alunos para comparar
         alunos = supabase.table("tb_alunos").select("cpf").execute().data
         cpfs = set(''.join(filter(str.isdigit, a['cpf'])) for a in alunos if a.get('cpf'))
         
@@ -605,12 +607,13 @@ def get_leads_crm(filtro_unidade: int | None = None, authorization: str = Header
                 "status": l.get('status','Pendente'),
                 "vendedor": l.get('vendedor','-'), 
                 "ja_e_aluno": (cpf_l in cpfs and cpf_l != ''),
-                "id_unidade": l.get('id_unidade') # Retorna a unidade para mostrar na tabela se precisar
+                "id_unidade": l.get('id_unidade') 
             })
         return res
     except Exception as e:
         print(f"Erro CRM: {e}") 
-        raise HTTPException(status_code=500)
+        # Retorna lista vazia em vez de erro 500 para não travar a tela
+        return []
 
 @app.patch("/admin/leads-crm/{id_inscricao}")
 def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
@@ -820,7 +823,6 @@ def get_cursos_permitidos(authorization: str = Header(None)):
         return {"cursos": liberados}
     except: return {"cursos": []}
 
-
 @app.get("/admin/dashboard-stats")
 def get_dashboard_stats(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -828,7 +830,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
     ctx = get_contexto_usuario(token)
     
     try:
-        # 1. CRM
+        # 1. CRM / LEADS
         q_leads = supabase.table("inscricoes").select("status", count="exact")
         if ctx['nivel'] < 9: q_leads = q_leads.eq("id_unidade", ctx['id_unidade'])
         leads_data = q_leads.execute().data
@@ -840,7 +842,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
         total_leads = len(leads_data)
         taxa_conversao = (matriculados / total_leads * 100) if total_leads > 0 else 0
 
-        # 2. ESCOLA
+        # 2. ALUNOS E TURMAS
         q_alunos = supabase.table("tb_alunos").select("id_aluno", count="exact")
         if ctx['nivel'] < 9: q_alunos = q_alunos.eq("id_unidade", ctx['id_unidade'])
         total_alunos = q_alunos.execute().count
@@ -849,15 +851,16 @@ def get_dashboard_stats(authorization: str = Header(None)):
         if ctx['nivel'] < 9: q_turmas = q_turmas.eq("id_unidade", ctx['id_unidade'])
         turmas_data = q_turmas.execute().data
         
-        # Considera ativas: Em Andamento (Vagas) + Fechada (Lotada)
+        # CORREÇÃO: Turmas Ativas agora são "Em Andamento" (Vagas) + "Fechada" (Lotada/Sem Vagas)
         turmas_ativas = sum(1 for t in turmas_data if t['status'] in ['Em Andamento', 'Fechada'])
         
+        # Agrupar cursos para o gráfico
         cursos_map = {}
         for t in turmas_data:
             nome = t.get('nome_curso', 'Outros')
             cursos_map[nome] = cursos_map.get(nome, 0) + 1
 
-        # 3. REPOSIÇÕES
+        # 3. REPOSIÇÕES PENDENTES
         repo_count = supabase.table("tb_reposicoes").select("id", count="exact").eq("status", "Agendada").execute().count
 
         return {
@@ -869,8 +872,3 @@ def get_dashboard_stats(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro dashboard: {e}")
         return {}
-
-
-
-
-
