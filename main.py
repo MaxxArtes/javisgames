@@ -876,3 +876,4 @@ def get_dashboard_stats(authorization: str = Header(None)):
         print(f"Erro dashboard: {e}")
         return {}
 
+
