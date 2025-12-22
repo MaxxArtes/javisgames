@@ -902,5 +902,126 @@ def get_dashboard_stats(authorization: str = Header(None)):
         print(f"Erro dashboard: {e}")
         return {}
 
+# --- ADICIONAR NO FINAL DO ARQUIVO OU JUNTO COM AS ROTAS DE CHAT ---
+
+class MensagemDiretaData(BaseModel):
+    id_colaborador: int | None = None # Se for None, é suporte geral
+    mensagem: str
+
+@app.get("/aluno/meus-contatos")
+def get_contatos_aluno(authorization: str = Header(None)):
+    """
+    Retorna:
+    1. Coordenadores da unidade do aluno.
+    2. Professores das turmas ATIVAS do aluno.
+    """
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        
+        # 1. Identificar o Aluno e sua Unidade
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno, id_unidade").eq("user_id", user.user.id).single().execute()
+        if not aluno_resp.data: raise HTTPException(status_code=404, detail="Aluno não encontrado")
+        
+        aluno = aluno_resp.data
+        id_unidade = aluno['id_unidade']
+        id_aluno = aluno['id_aluno']
+
+        contatos = []
+
+        # 2. Buscar Coordenadores da Unidade (Nível de acesso ou ID cargo específico)
+        # Ajuste o filtro conforme seus IDs de cargo (Ex: 3=Coord, 8=Gerente)
+        coords = supabase.table("tb_colaboradores")\
+            .select("id_colaborador, nome_completo, tb_cargos!inner(nome_cargo)")\
+            .eq("id_unidade", id_unidade)\
+            .eq("ativo", True)\
+            .in_("id_cargo", [3, 8, 9])\
+            .execute()
+            
+        for c in coords.data:
+            contatos.append({
+                "id": c['id_colaborador'],
+                "nome": c['nome_completo'],
+                "cargo": c['tb_cargos']['nome_cargo'],
+                "tipo": "Coordenacao"
+            })
+
+        # 3. Buscar Professores das Turmas do Aluno
+        # tb_matriculas -> tb_turmas -> tb_colaboradores
+        matriculas = supabase.table("tb_matriculas")\
+            .select("codigo_turma, tb_turmas!inner(nome_curso, id_professor, tb_colaboradores!inner(id_colaborador, nome_completo))")\
+            .eq("id_aluno", id_aluno)\
+            .execute()
+
+        professores_ids = set() # Para não repetir professor se tiver 2 turmas com ele
+        for m in matriculas.data:
+            turma = m['tb_turmas']
+            prof = turma['tb_colaboradores']
+            
+            if prof and prof['id_colaborador'] not in professores_ids:
+                contatos.append({
+                    "id": prof['id_colaborador'],
+                    "nome": prof['nome_completo'],
+                    "cargo": f"Prof. {turma['nome_curso']}",
+                    "tipo": "Professor"
+                })
+                professores_ids.add(prof['id_colaborador'])
+
+        return contatos
+
+    except Exception as e:
+        print(f"Erro contatos: {e}")
+        return []
+
+@app.get("/chat/mensagens-com/{id_colaborador}")
+def get_mensagens_privadas(id_colaborador: str, authorization: str = Header(None)):
+    """ Busca mensagens trocadas especificamente com aquele colaborador """
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user_id = supabase.auth.get_user(token).user.id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).single().execute()
+        id_aluno = aluno_resp.data['id_aluno']
+        
+        # Conversão de "null" string para None real se for chat geral
+        target = int(id_colaborador) if id_colaborador != "geral" else None
+        
+        query = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno)
+        
+        if target:
+            query = query.eq("id_colaborador", target)
+        else:
+            query = query.is_("id_colaborador", "null") # Chat Geral
+            
+        return query.order("created_at").execute().data
+    except Exception as e:
+        return []
+
+@app.post("/chat/enviar-direto")
+def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user_id = supabase.auth.get_user(token).user.id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).single().execute()
+        
+        payload = {
+            "id_aluno": aluno_resp.data['id_aluno'],
+            "mensagem": dados.mensagem,
+            "enviado_por_admin": False,
+            "lida": False
+        }
+        
+        # Se tiver id_colaborador, salva. Se não, fica NULL (Suporte Geral)
+        if dados.id_colaborador:
+            payload["id_colaborador"] = dados.id_colaborador
+
+        supabase.table("tb_chat").insert(payload).execute()
+        return {"message": "Enviado"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
