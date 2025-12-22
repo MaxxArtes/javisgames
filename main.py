@@ -806,6 +806,32 @@ def recuperar_senha(dados: EmailData):
         return {"message": "Email enviado"}
     except: raise HTTPException(status_code=400, detail="Erro ao enviar email.")
 
+# --- CONTEÚDO DAS AULAS ---
+@app.get("/conteudo-aula")
+def get_conteudo_aula(titulo: str):
+    """
+    Busca o script, código e desafio da aula pelo título exato.
+    Ex: titulo="Aula 01: O Primeiro Contato"
+    """
+    try:
+        # Busca na tabela 'conteudos_aulas' onde 'titulo_aula' é igual ao parametro
+        # .maybe_single() retorna None se não achar, em vez de erro
+        response = supabase.table("conteudos_aulas").select("*").eq("titulo_aula", titulo).maybe_single().execute()
+        
+        if response.data:
+            return response.data
+        else:
+            # Retorna um conteúdo padrão se não achar no banco
+            return {
+                "titulo_aula": titulo,
+                "script": "Conteúdo ainda não disponível no sistema.",
+                "codigo_exemplo": "# Aguardando atualização do professor...",
+                "desafio": "Tente explorar o Pygame por conta própria!"
+            }
+    except Exception as e:
+        print(f"Erro ao buscar conteúdo da aula: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno ao buscar aula")
+
 @app.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -875,5 +901,6 @@ def get_dashboard_stats(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro dashboard: {e}")
         return {}
+
 
 
