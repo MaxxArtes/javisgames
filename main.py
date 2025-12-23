@@ -991,6 +991,7 @@ def get_contatos_aluno(authorization: str = Header(None)):
                             "nome": p['nome_completo'],
                             "cargo": f"Prof. {nome_curso}",
                             "tipo": "Professor"
+                            "codigo_turma_grupo": t['codigo_turma']
                         })
         except Exception:
             pass 
@@ -1113,6 +1114,7 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
