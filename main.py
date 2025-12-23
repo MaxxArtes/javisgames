@@ -910,106 +910,96 @@ class MensagemDiretaData(BaseModel):
 
 @app.get("/aluno/meus-contatos")
 def get_contatos_aluno(authorization: str = Header(None)):
-    print("--- INICIANDO DEBUG CONTATOS (VERSÃO CORRIGIDA) ---")
+    """
+    Retorna:
+    1. Coordenadores da unidade do aluno.
+    2. Professores das turmas ATIVAS do aluno.
+    """
     if not authorization: raise HTTPException(status_code=401)
     try:
+        # 1. Identificar o Aluno via Token
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
-        print(f"1. User ID Auth: {user.user.id}")
         
-        # FIX: Removemos .maybe_single() para evitar o erro 204
-        aluno_resp = supabase.table("tb_alunos").select("*").eq("user_id", user.user.id).execute()
+        # Busca ID do Aluno e Unidade (Sem .maybe_single() para evitar erro 204)
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno, id_unidade").eq("user_id", user.user.id).execute()
         
-        # Verificação manual da lista
-        if not aluno_resp.data or len(aluno_resp.data) == 0:
-            print(f"ERRO: Aluno NÃO encontrado na tabela 'tb_alunos' para o user_id {user.user.id}")
-            # Se você tem certeza que o dado existe, verifique se está usando a SERVICE_ROLE KEY no .env do Render
+        if not aluno_resp.data: 
             return []
-            
-        aluno = aluno_resp.data[0] # Pega o primeiro item da lista com segurança
+        
+        aluno = aluno_resp.data[0]
         id_aluno = aluno['id_aluno']
         id_unidade = aluno['id_unidade']
-        print(f"2. Aluno encontrado: ID {id_aluno}, Unidade {id_unidade}")
 
         contatos = []
 
         # --- PARTE A: COORDENAÇÃO ---
-        print("3. Buscando Coordenação...")
-        coords = supabase.table("tb_colaboradores")\
-            .select("id_colaborador, nome_completo, id_cargo")\
-            .eq("id_unidade", id_unidade)\
-            .in_("id_cargo", [3, 8, 9])\
-            .execute()
-            
-        print(f"   -> Coordenadores encontrados: {len(coords.data)}")
+        try:
+            coords = supabase.table("tb_colaboradores")\
+                .select("id_colaborador, nome_completo, id_cargo")\
+                .eq("id_unidade", id_unidade)\
+                .in_("id_cargo", [3, 8, 9])\
+                .execute()
 
-        for c in coords.data:
-            cargo_nome = "Coordenação"
-            if c['id_cargo'] == 8: cargo_nome = "Gerência"
-            elif c['id_cargo'] == 9: cargo_nome = "Diretoria"
-            
-            contatos.append({
-                "id": c['id_colaborador'],
-                "nome": c['nome_completo'],
-                "cargo": cargo_nome,
-                "tipo": "Coordenacao"
-            })
+            for c in coords.data:
+                cargo_nome = "Coordenação"
+                if c['id_cargo'] == 8: cargo_nome = "Gerência"
+                elif c['id_cargo'] == 9: cargo_nome = "Diretoria"
+                
+                contatos.append({
+                    "id": c['id_colaborador'],
+                    "nome": c['nome_completo'],
+                    "cargo": cargo_nome,
+                    "tipo": "Coordenacao"
+                })
+        except Exception:
+            pass # Continua se falhar coordenação
 
         # --- PARTE B: PROFESSORES ---
-        print("4. Buscando Matrículas...")
-        matriculas = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
-        codigos_turmas = [m['codigo_turma'] for m in matriculas.data]
-        print(f"   -> Turmas do aluno: {codigos_turmas}")
+        try:
+            # Passo 1: Matrículas
+            matriculas = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
+            codigos_turmas = [m['codigo_turma'] for m in matriculas.data]
 
-        if codigos_turmas:
-            print("5. Buscando detalhes das turmas...")
-            # Usando .in_() para buscar turmas
-            turmas = supabase.table("tb_turmas")\
-                .select("codigo_turma, nome_curso, id_professor")\
-                .in_("codigo_turma", codigos_turmas)\
-                .execute()
-            
-            print(f"   -> Detalhes encontrados: {len(turmas.data)} turmas")
-            
-            prof_curso_map = {}
-            ids_professores = []
-            
-            for t in turmas.data:
-                pid = t.get('id_professor')
-                print(f"   -> Turma {t['codigo_turma']}: ID Prof = {pid}")
-                
-                if pid:
-                    prof_curso_map[str(pid)] = t['nome_curso'] # Forçando string para garantir map
-                    ids_professores.append(pid)
-
-            print(f"6. IDs de Professores a buscar: {ids_professores}")
-
-            if ids_professores:
-                profs = supabase.table("tb_colaboradores")\
-                    .select("id_colaborador, nome_completo")\
-                    .in_("id_colaborador", ids_professores)\
+            if codigos_turmas:
+                # Passo 2: Turmas
+                turmas = supabase.table("tb_turmas")\
+                    .select("codigo_turma, nome_curso, id_professor")\
+                    .in_("codigo_turma", codigos_turmas)\
                     .execute()
                 
-                print(f"7. Professores retornados do banco: {len(profs.data)}")
-                    
-                for p in profs.data:
-                    pid = p['id_colaborador']
-                    # Busca segura no mapa
-                    nome_curso = prof_curso_map.get(str(pid)) or "Professor"
+                prof_curso_map = {}
+                ids_professores = []
+                
+                for t in turmas.data:
+                    pid = t.get('id_professor')
+                    if pid:
+                        prof_curso_map[str(pid)] = t['nome_curso']
+                        ids_professores.append(pid)
 
-                    contatos.append({
-                        "id": pid,
-                        "nome": p['nome_completo'],
-                        "cargo": f"Prof. {nome_curso}",
-                        "tipo": "Professor"
-                    })
+                # Passo 3: Professores
+                if ids_professores:
+                    profs = supabase.table("tb_colaboradores")\
+                        .select("id_colaborador, nome_completo")\
+                        .in_("id_colaborador", ids_professores)\
+                        .execute()
+                        
+                    for p in profs.data:
+                        pid = p['id_colaborador']
+                        nome_curso = prof_curso_map.get(str(pid)) or "Professor"
 
-        print(f"--- FIM DEBUG: Retornando {len(contatos)} contatos ---")
+                        contatos.append({
+                            "id": pid,
+                            "nome": p['nome_completo'],
+                            "cargo": f"Prof. {nome_curso}",
+                            "tipo": "Professor"
+                        })
+        except Exception:
+            pass 
+
         return contatos
 
-    except Exception as e:
-        print(f"ERRO CRÍTICO NO PYTHON: {e}")
-        # Retorna lista vazia para o front não quebrar, mas loga o erro
+    except Exception:
         return []
 
 @app.get("/chat/mensagens-com/{id_colaborador}")
@@ -1059,6 +1049,7 @@ def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(Non
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
