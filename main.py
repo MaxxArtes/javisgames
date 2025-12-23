@@ -910,20 +910,23 @@ class MensagemDiretaData(BaseModel):
 
 @app.get("/aluno/meus-contatos")
 def get_contatos_aluno(authorization: str = Header(None)):
-    print("--- INICIANDO DEBUG CONTATOS ---")
+    print("--- INICIANDO DEBUG CONTATOS (VERSÃO CORRIGIDA) ---")
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         print(f"1. User ID Auth: {user.user.id}")
         
-        # Busca Aluno
-        aluno_resp = supabase.table("tb_alunos").select("*").eq("user_id", user.user.id).maybe_single().execute()
-        if not aluno_resp.data:
-            print("ERRO: Aluno não encontrado no banco para este user_id.")
+        # FIX: Removemos .maybe_single() para evitar o erro 204
+        aluno_resp = supabase.table("tb_alunos").select("*").eq("user_id", user.user.id).execute()
+        
+        # Verificação manual da lista
+        if not aluno_resp.data or len(aluno_resp.data) == 0:
+            print(f"ERRO: Aluno NÃO encontrado na tabela 'tb_alunos' para o user_id {user.user.id}")
+            # Se você tem certeza que o dado existe, verifique se está usando a SERVICE_ROLE KEY no .env do Render
             return []
             
-        aluno = aluno_resp.data
+        aluno = aluno_resp.data[0] # Pega o primeiro item da lista com segurança
         id_aluno = aluno['id_aluno']
         id_unidade = aluno['id_unidade']
         print(f"2. Aluno encontrado: ID {id_aluno}, Unidade {id_unidade}")
@@ -931,14 +934,14 @@ def get_contatos_aluno(authorization: str = Header(None)):
         contatos = []
 
         # --- PARTE A: COORDENAÇÃO ---
-        # Removido o filtro .eq("ativo", True) temporariamente para teste
+        print("3. Buscando Coordenação...")
         coords = supabase.table("tb_colaboradores")\
             .select("id_colaborador, nome_completo, id_cargo")\
             .eq("id_unidade", id_unidade)\
             .in_("id_cargo", [3, 8, 9])\
             .execute()
             
-        print(f"3. Coordenadores encontrados: {len(coords.data)}")
+        print(f"   -> Coordenadores encontrados: {len(coords.data)}")
 
         for c in coords.data:
             cargo_nome = "Coordenação"
@@ -953,37 +956,35 @@ def get_contatos_aluno(authorization: str = Header(None)):
             })
 
         # --- PARTE B: PROFESSORES ---
-        
-        # Passo 1: Matrículas
+        print("4. Buscando Matrículas...")
         matriculas = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
         codigos_turmas = [m['codigo_turma'] for m in matriculas.data]
-        print(f"4. Turmas do aluno (Matrículas): {codigos_turmas}")
+        print(f"   -> Turmas do aluno: {codigos_turmas}")
 
         if codigos_turmas:
-            # Passo 2: Dados da Turma (REMOVI O FILTRO .neq para segurança)
+            print("5. Buscando detalhes das turmas...")
+            # Usando .in_() para buscar turmas
             turmas = supabase.table("tb_turmas")\
                 .select("codigo_turma, nome_curso, id_professor")\
                 .in_("codigo_turma", codigos_turmas)\
                 .execute()
             
-            print(f"5. Detalhes das Turmas encontradas: {len(turmas.data)}")
+            print(f"   -> Detalhes encontrados: {len(turmas.data)} turmas")
             
             prof_curso_map = {}
             ids_professores = []
             
             for t in turmas.data:
                 pid = t.get('id_professor')
-                print(f"   -> Turma {t['codigo_turma']}: Prof ID cru é '{pid}' (Tipo: {type(pid)})")
+                print(f"   -> Turma {t['codigo_turma']}: ID Prof = {pid}")
                 
                 if pid:
-                    prof_curso_map[pid] = t['nome_curso']
+                    prof_curso_map[str(pid)] = t['nome_curso'] # Forçando string para garantir map
                     ids_professores.append(pid)
 
             print(f"6. IDs de Professores a buscar: {ids_professores}")
 
-            # Passo 3: Dados do Professor
             if ids_professores:
-                # DICA: Se o ID for numérico mas estiver como string na lista, o Postgres geralmente aceita.
                 profs = supabase.table("tb_colaboradores")\
                     .select("id_colaborador, nome_completo")\
                     .in_("id_colaborador", ids_professores)\
@@ -993,12 +994,8 @@ def get_contatos_aluno(authorization: str = Header(None)):
                     
                 for p in profs.data:
                     pid = p['id_colaborador']
-                    # Garante que usamos a mesma chave (string ou int) para buscar no mapa
-                    # Tenta buscar direto, se não der, tenta converter para string ou int
-                    nome_curso = prof_curso_map.get(pid)
-                    if not nome_curso:
-                         # Fallback de tipo (se pid for int e mapa tiver string '11')
-                         nome_curso = prof_curso_map.get(str(pid)) or prof_curso_map.get(int(pid)) or "Professor"
+                    # Busca segura no mapa
+                    nome_curso = prof_curso_map.get(str(pid)) or "Professor"
 
                     contatos.append({
                         "id": pid,
@@ -1012,8 +1009,8 @@ def get_contatos_aluno(authorization: str = Header(None)):
 
     except Exception as e:
         print(f"ERRO CRÍTICO NO PYTHON: {e}")
-        # Retornar o erro na API para veres no navegador também, se quiseres
-        raise HTTPException(status_code=500, detail=str(e))
+        # Retorna lista vazia para o front não quebrar, mas loga o erro
+        return []
 
 @app.get("/chat/mensagens-com/{id_colaborador}")
 def get_mensagens_privadas(id_colaborador: str, authorization: str = Header(None)):
@@ -1062,6 +1059,7 @@ def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(Non
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
