@@ -902,7 +902,7 @@ def get_dashboard_stats(authorization: str = Header(None)):
         print(f"Erro dashboard: {e}")
         return {}
 
-# --- ADICIONAR NO FINAL DO ARQUIVO OU JUNTO COM AS ROTAS DE CHAT ---
+
 
 class MensagemDiretaData(BaseModel):
     id_colaborador: int | None = None # Se for None, é suporte geral
@@ -949,24 +949,35 @@ def get_contatos_aluno(authorization: str = Header(None)):
 
         # 3. Buscar Professores das Turmas do Aluno
         # tb_matriculas -> tb_turmas -> tb_colaboradores
-        matriculas = supabase.table("tb_matriculas")\
-            .select("codigo_turma, tb_turmas!inner(nome_curso, id_professor, tb_colaboradores!inner(id_colaborador, nome_completo))")\
+        response_matriculas = supabase.table("tb_matriculas")\
+            .select("codigo_turma, tb_turmas(nome_curso, id_professor)")\
             .eq("id_aluno", id_aluno)\
             .execute()
 
-        professores_ids = set() # Para não repetir professor se tiver 2 turmas com ele
-        for m in matriculas.data:
-            turma = m['tb_turmas']
-            prof = turma['tb_colaboradores']
-            
-            if prof and prof['id_colaborador'] not in professores_ids:
-                contatos.append({
-                    "id": prof['id_colaborador'],
-                    "nome": prof['nome_completo'],
-                    "cargo": f"Prof. {turma['nome_curso']}",
-                    "tipo": "Professor"
-                })
-                professores_ids.add(prof['id_colaborador'])
+        professores_ids = set() 
+        
+        # Agora buscamos os nomes dos professores manualmente para evitar erro de Join complexo
+        for m in response_matriculas.data:
+            turma = m.get('tb_turmas')
+            if turma and turma.get('id_professor'): # Só se tiver professor
+                id_prof = turma['id_professor']
+                
+                if id_prof not in professores_ids:
+                    # Busca dados do professor
+                    prof_resp = supabase.table("tb_colaboradores")\
+                        .select("id_colaborador, nome_completo")\
+                        .eq("id_colaborador", id_prof)\
+                        .single().execute()
+                    
+                    if prof_resp.data:
+                        prof = prof_resp.data
+                        contatos.append({
+                            "id": prof['id_colaborador'],
+                            "nome": prof['nome_completo'],
+                            "cargo": f"Prof. {turma['nome_curso']}",
+                            "tipo": "Professor"
+                        })
+                        professores_ids.add(id_prof)
 
         return contatos
 
@@ -1021,6 +1032,7 @@ def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(Non
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
