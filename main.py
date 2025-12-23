@@ -910,107 +910,110 @@ class MensagemDiretaData(BaseModel):
 
 @app.get("/aluno/meus-contatos")
 def get_contatos_aluno(authorization: str = Header(None)):
-    """
-    Versão 'Manual' (Sem Joins complexos) para evitar erros de RLS/FK
-    """
+    print("--- INICIANDO DEBUG CONTATOS ---")
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # 1. Identificar o Aluno via Token
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
+        print(f"1. User ID Auth: {user.user.id}")
         
-        # Busca ID do Aluno e Unidade
-        aluno_resp = supabase.table("tb_alunos")\
-            .select("id_aluno, id_unidade")\
-            .eq("user_id", user.user.id)\
-            .maybe_single().execute()
-            
-        if not aluno_resp.data: 
+        # Busca Aluno
+        aluno_resp = supabase.table("tb_alunos").select("*").eq("user_id", user.user.id).maybe_single().execute()
+        if not aluno_resp.data:
+            print("ERRO: Aluno não encontrado no banco para este user_id.")
             return []
-        
+            
         aluno = aluno_resp.data
         id_aluno = aluno['id_aluno']
         id_unidade = aluno['id_unidade']
+        print(f"2. Aluno encontrado: ID {id_aluno}, Unidade {id_unidade}")
 
         contatos = []
 
-        # --- PARTE A: COORDENAÇÃO (Busca direta por unidade) ---
-        # Filtra cargos de coordenação (3, 8, 9) na mesma unidade
-        try:
-            coords = supabase.table("tb_colaboradores")\
-                .select("id_colaborador, nome_completo, id_cargo")\
-                .eq("id_unidade", id_unidade)\
-                .eq("ativo", True)\
-                .in_("id_cargo", [3, 8, 9])\
-                .execute()
-
-            for c in coords.data:
-                # Opcional: Buscar nome do cargo manualmente se precisar, ou fixar string
-                cargo_nome = "Coordenação"
-                if c['id_cargo'] == 8: cargo_nome = "Gerência"
-                elif c['id_cargo'] == 9: cargo_nome = "Diretoria"
-                
-                contatos.append({
-                    "id": c['id_colaborador'],
-                    "nome": c['nome_completo'],
-                    "cargo": cargo_nome,
-                    "tipo": "Coordenacao"
-                })
-        except Exception as e:
-            print(f"Erro ao buscar coordenação: {e}")
-
-        # --- PARTE B: PROFESSORES (Busca Passo-a-Passo) ---
-        
-        # Passo 1: Pegar códigos das turmas do aluno
-        matriculas = supabase.table("tb_matriculas")\
-            .select("codigo_turma")\
-            .eq("id_aluno", id_aluno)\
+        # --- PARTE A: COORDENAÇÃO ---
+        # Removido o filtro .eq("ativo", True) temporariamente para teste
+        coords = supabase.table("tb_colaboradores")\
+            .select("id_colaborador, nome_completo, id_cargo")\
+            .eq("id_unidade", id_unidade)\
+            .in_("id_cargo", [3, 8, 9])\
             .execute()
             
+        print(f"3. Coordenadores encontrados: {len(coords.data)}")
+
+        for c in coords.data:
+            cargo_nome = "Coordenação"
+            if c['id_cargo'] == 8: cargo_nome = "Gerência"
+            elif c['id_cargo'] == 9: cargo_nome = "Diretoria"
+            
+            contatos.append({
+                "id": c['id_colaborador'],
+                "nome": c['nome_completo'],
+                "cargo": cargo_nome,
+                "tipo": "Coordenacao"
+            })
+
+        # --- PARTE B: PROFESSORES ---
+        
+        # Passo 1: Matrículas
+        matriculas = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
         codigos_turmas = [m['codigo_turma'] for m in matriculas.data]
+        print(f"4. Turmas do aluno (Matrículas): {codigos_turmas}")
 
         if codigos_turmas:
-            # Passo 2: Pegar dados das turmas (Professor e Curso)
+            # Passo 2: Dados da Turma (REMOVI O FILTRO .neq para segurança)
             turmas = supabase.table("tb_turmas")\
                 .select("codigo_turma, nome_curso, id_professor")\
                 .in_("codigo_turma", codigos_turmas)\
-                .neq("id_professor", None)\
                 .execute()
             
-            # Mapear turmas para saber qual curso é de qual professor
-            # Ex: { 11: "GAME DEV" }
+            print(f"5. Detalhes das Turmas encontradas: {len(turmas.data)}")
+            
             prof_curso_map = {}
             ids_professores = []
             
             for t in turmas.data:
-                if t['id_professor']:
-                    pid = t['id_professor']
+                pid = t.get('id_professor')
+                print(f"   -> Turma {t['codigo_turma']}: Prof ID cru é '{pid}' (Tipo: {type(pid)})")
+                
+                if pid:
                     prof_curso_map[pid] = t['nome_curso']
                     ids_professores.append(pid)
 
-            # Passo 3: Pegar nomes dos professores
+            print(f"6. IDs de Professores a buscar: {ids_professores}")
+
+            # Passo 3: Dados do Professor
             if ids_professores:
+                # DICA: Se o ID for numérico mas estiver como string na lista, o Postgres geralmente aceita.
                 profs = supabase.table("tb_colaboradores")\
                     .select("id_colaborador, nome_completo")\
                     .in_("id_colaborador", ids_professores)\
                     .execute()
+                
+                print(f"7. Professores retornados do banco: {len(profs.data)}")
                     
                 for p in profs.data:
                     pid = p['id_colaborador']
-                    curso = prof_curso_map.get(pid, "Professor")
-                    
+                    # Garante que usamos a mesma chave (string ou int) para buscar no mapa
+                    # Tenta buscar direto, se não der, tenta converter para string ou int
+                    nome_curso = prof_curso_map.get(pid)
+                    if not nome_curso:
+                         # Fallback de tipo (se pid for int e mapa tiver string '11')
+                         nome_curso = prof_curso_map.get(str(pid)) or prof_curso_map.get(int(pid)) or "Professor"
+
                     contatos.append({
                         "id": pid,
                         "nome": p['nome_completo'],
-                        "cargo": f"Prof. {curso}",
+                        "cargo": f"Prof. {nome_curso}",
                         "tipo": "Professor"
                     })
 
+        print(f"--- FIM DEBUG: Retornando {len(contatos)} contatos ---")
         return contatos
 
     except Exception as e:
-        print(f"Erro geral contatos: {e}")
-        return [] # Retorna vazio em vez de erro 500 para não travar o front
+        print(f"ERRO CRÍTICO NO PYTHON: {e}")
+        # Retornar o erro na API para veres no navegador também, se quiseres
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/chat/mensagens-com/{id_colaborador}")
 def get_mensagens_privadas(id_colaborador: str, authorization: str = Header(None)):
@@ -1059,6 +1062,7 @@ def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(Non
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
