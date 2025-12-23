@@ -912,16 +912,16 @@ class MensagemDiretaData(BaseModel):
 def get_contatos_aluno(authorization: str = Header(None)):
     """
     Retorna:
-    1. Coordenadores da unidade do aluno.
+    1. Coordenador Pedagógico da unidade (ID Cargo 4).
     2. Professores das turmas ATIVAS do aluno.
     """
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # 1. Identificar o Aluno via Token
+        # 1. Identificar o Aluno
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         
-        # Busca ID do Aluno e Unidade (Sem .maybe_single() para evitar erro 204)
+        # Busca ID do Aluno e Unidade
         aluno_resp = supabase.table("tb_alunos").select("id_aluno, id_unidade").eq("user_id", user.user.id).execute()
         
         if not aluno_resp.data: 
@@ -933,36 +933,34 @@ def get_contatos_aluno(authorization: str = Header(None)):
 
         contatos = []
 
-        # --- PARTE A: COORDENAÇÃO ---
+        # --- PARTE A: COORDENADOR PEDAGÓGICO (ID 4) ---
         try:
+            # Busca apenas quem tem id_cargo = 4 (Coord. Pedagógico) na unidade do aluno
             coords = supabase.table("tb_colaboradores")\
                 .select("id_colaborador, nome_completo, id_cargo")\
                 .eq("id_unidade", id_unidade)\
-                .in_("id_cargo", [3, 8, 9])\
+                .eq("ativo", True)\
+                .eq("id_cargo", 4)\
                 .execute()
 
             for c in coords.data:
-                cargo_nome = "Coordenação"
-                if c['id_cargo'] == 8: cargo_nome = "Gerência"
-                elif c['id_cargo'] == 9: cargo_nome = "Diretoria"
-                
                 contatos.append({
                     "id": c['id_colaborador'],
                     "nome": c['nome_completo'],
-                    "cargo": cargo_nome,
+                    "cargo": "Coord. Pedagógico",
                     "tipo": "Coordenacao"
                 })
         except Exception:
-            pass # Continua se falhar coordenação
+            pass 
 
-        # --- PARTE B: PROFESSORES ---
+        # --- PARTE B: PROFESSORES (Das Turmas) ---
         try:
-            # Passo 1: Matrículas
+            # 1. Matrículas do aluno
             matriculas = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
             codigos_turmas = [m['codigo_turma'] for m in matriculas.data]
 
             if codigos_turmas:
-                # Passo 2: Turmas
+                # 2. Turmas para pegar os IDs dos professores
                 turmas = supabase.table("tb_turmas")\
                     .select("codigo_turma, nome_curso, id_professor")\
                     .in_("codigo_turma", codigos_turmas)\
@@ -977,7 +975,7 @@ def get_contatos_aluno(authorization: str = Header(None)):
                         prof_curso_map[str(pid)] = t['nome_curso']
                         ids_professores.append(pid)
 
-                # Passo 3: Professores
+                # 3. Dados dos Professores
                 if ids_professores:
                     profs = supabase.table("tb_colaboradores")\
                         .select("id_colaborador, nome_completo")\
@@ -1049,6 +1047,7 @@ def enviar_msg_direta(dados: MensagemDiretaData, authorization: str = Header(Non
         return {"message": "Enviado"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
