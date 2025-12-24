@@ -1119,13 +1119,73 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         print(f"Erro envio grupo: {e}") # Log para debug
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/admin/chat/historico-unificado")
+def get_historico_unificado(authorization: str = Header(None)):
+    """
+    Retorna uma lista unificada de conversas recentes (Alunos e Grupos),
+    ordenada pela mensagem mais recente.
+    """
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # 1. Buscar últimas mensagens privadas (tb_chat)
+        # Limitamos a 200 para pegar histórico recente sem pesar o banco
+        chats_privados = supabase.table("tb_chat")\
+            .select("*, tb_alunos(nome_completo)")\
+            .order("created_at", desc=True)\
+            .limit(200)\
+            .execute()
+            
+        # 2. Buscar últimas mensagens de grupo (tb_chat_turma)
+        chats_grupos = supabase.table("tb_chat_turma")\
+            .select("*")\
+            .order("created_at", desc=True)\
+            .limit(200)\
+            .execute()
+            
+        historico = []
+        ids_processados = set() # Para evitar duplicatas (mostrar só a última do aluno)
+        grupos_processados = set() # Para evitar duplicatas (mostrar só a última do grupo)
 
+        # Processar Privados
+        for c in chats_privados.data:
+            id_aluno = c['id_aluno']
+            if id_aluno not in ids_processados:
+                nome = "Aluno Desconhecido"
+                if c.get('tb_alunos'):
+                    nome = c['tb_alunos']['nome_completo']
+                
+                historico.append({
+                    "tipo": "privado",
+                    "id": id_aluno,
+                    "nome": nome,
+                    "ultima_msg": c['mensagem'],
+                    "timestamp": c['created_at'],
+                    "lida": c['lida']
+                })
+                ids_processados.add(id_aluno)
 
+        # Processar Grupos
+        for g in chats_grupos.data:
+            cod_turma = g['codigo_turma']
+            if cod_turma not in grupos_processados:
+                historico.append({
+                    "tipo": "grupo",
+                    "id": cod_turma, # O ID do grupo é o código da turma
+                    "nome": f"Grupo {cod_turma}",
+                    "ultima_msg": f"{g['nome_exibicao']}: {g['mensagem']}",
+                    "timestamp": g['created_at'],
+                    "lida": True # Grupos não têm status de lido individual
+                })
+                grupos_processados.add(cod_turma)
 
+        # 3. Ordenar tudo por data (mais recente primeiro)
+        historico.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        return historico
 
-
-
-
+    except Exception as e:
+        print(f"Erro historico unificado: {e}")
+        return []
 
 
 
