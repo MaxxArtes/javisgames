@@ -7,6 +7,18 @@ from supabase import create_client, Client
 import requests 
 from datetime import datetime, timedelta
 import shutil
+import logging
+
+# Configuração básica do Logger
+logging.basicConfig(
+    level=logging.INFO, # Registra INFO, WARNING e ERROR
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("app.log"), # Salva em arquivo
+        logging.StreamHandler()         # Mostra no terminal
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Dicionário para traduzir dia da semana em número (0 = Segunda, 6 = Domingo)
 DIAS_MAPA = {
@@ -1186,6 +1198,7 @@ def get_historico_unificado(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro historico unificado: {e}")
         return []
+
 
 
 
