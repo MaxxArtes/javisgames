@@ -1075,7 +1075,7 @@ def get_chat_turma(codigo_turma: str, authorization: str = Header(None)):
 
 @app.post("/chat/turma/enviar")
 def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None)):
-    """ Envia mensagem para o grupo identificando quem é a pessoa """
+    """ Envia mensagem para o grupo (Versão Corrigida: Sem maybe_single) """
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
@@ -1086,21 +1086,24 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         nome_exibicao = "Usuário"
         cargo_exibicao = "Desconhecido"
         
-        # Tenta achar como Colaborador
-        colab = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).maybe_single().execute()
+        # Tenta achar como Colaborador (Busca segura)
+        colab_resp = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).execute()
         
-        if colab.data:
-            c = colab.data
+        if colab_resp.data and len(colab_resp.data) > 0:
+            c = colab_resp.data[0]
             nome_exibicao = c['nome_completo'].split()[0] # Primeiro nome
             if c['id_cargo'] == 6: cargo_exibicao = "Professor"
             elif c['id_cargo'] == 4: cargo_exibicao = "Coordenação"
             else: cargo_exibicao = "Staff"
         else:
-            # Se não é staff, tenta achar como Aluno
-            aluno = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).maybe_single().execute()
-            if aluno.data:
-                nome_exibicao = aluno.data['nome_completo'].split()[0]
+            # Se não achou colaborador, busca como Aluno (Busca segura)
+            aluno_resp = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).execute()
+            
+            if aluno_resp.data and len(aluno_resp.data) > 0:
+                nome_exibicao = aluno_resp.data[0]['nome_completo'].split()[0]
                 cargo_exibicao = "Aluno"
+            else:
+                print(f"ERRO: Usuário {user_id} não encontrado nem como aluno nem colaborador.")
         
         # 2. Salvar Mensagem
         supabase.table("tb_chat_turma").insert({
@@ -1113,6 +1116,7 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         
         return {"message": "Enviado"}
     except Exception as e:
+        print(f"Erro envio grupo: {e}") # Log para debug
         raise HTTPException(status_code=500, detail=str(e))
 
 
