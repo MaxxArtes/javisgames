@@ -1198,6 +1198,43 @@ def get_historico_unificado(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro historico unificado: {e}")
         return []
+# --- ADICIONAR NO FINAL DO ARQUIVO main.py ---
+
+@app.get("/conteudo-didatico/cursos")
+def get_cursos_didaticos(authorization: str = Header(None)):
+    """
+    Retorna a estrutura completa de cursos, módulos e aulas.
+    """
+    if not authorization: raise HTTPException(status_code=401)
+    
+    try:
+        # A sintaxe do select aninhado no Supabase Python segue o padrão PostgREST
+        response = supabase.table("cursos")\
+            .select("id, titulo, icone, ordem, modulos(id, titulo, ordem, aulas(id, titulo, caminho_arquivo, ordem))")\
+            .eq("ativo", True)\
+            .order("ordem")\
+            .execute()
+
+        cursos = response.data
+        
+        # Ordenação manual no Python para garantir (Módulos e Aulas)
+        # O Supabase às vezes não garante a ordem de itens aninhados na resposta JSON
+        for curso in cursos:
+            # Ordenar módulos
+            if 'modulos' in curso and curso['modulos']:
+                curso['modulos'].sort(key=lambda x: x['ordem'])
+                
+                # Ordenar aulas dentro de cada módulo
+                for modulo in curso['modulos']:
+                    if 'aulas' in modulo and modulo['aulas']:
+                        modulo['aulas'].sort(key=lambda x: x['ordem'])
+        
+        return cursos
+
+    except Exception as e:
+        print(f"Erro ao buscar cursos didáticos: {e}")
+        # Retorna lista vazia em caso de erro para não quebrar o front
+        return []
 
 
 
