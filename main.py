@@ -1238,43 +1238,47 @@ def get_cursos_didaticos(authorization: str = Header(None)):
 
 
 # --- MODELO PARA SALVAR CONTEÚDO ---
+# Modelo para receber o HTML do editor
 class AulaConteudoData(BaseModel):
     conteudo: str
 
-# --- ROTA: PEGAR CONTEÚDO DA AULA ---
+# Rota para buscar o conteúdo (Banco ou Arquivo)
 @app.get("/admin/aula/{id_aula}/conteudo")
 def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # Busca o conteúdo no banco
+        # Busca se já existe conteúdo salvo no banco
         response = supabase.table("aulas").select("conteudo, caminho_arquivo").eq("id", id_aula).single().execute()
         data = response.data
         
-        # Se tiver conteúdo editado no banco, retorna ele.
+        # Se tiver HTML salvo no banco, retorna ele
         if data.get('conteudo'):
             return {"html": data['conteudo'], "tipo": "banco"}
         
-        # Se não tiver, retorna aviso ou tenta ler o arquivo estático (opcional, mas complexo via API)
+        # Se não tiver, retorna vazio (para o professor criar do zero)
         return {"html": "", "tipo": "vazio"} 
     except Exception as e:
         print(f"Erro buscar conteudo: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao carregar aula")
+        # Retorna vazio em caso de erro para não travar o editor
+        return {"html": "", "tipo": "erro"}
 
-# --- ROTA: SALVAR CONTEÚDO ---
+# Rota para SALVAR o conteúdo editado
 @app.put("/admin/aula/{id_aula}/salvar")
 def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
-    # Verifica permissão (apenas Prof, Coord ou Admin)
+    # Verifica permissão (apenas Prof Nível 5 ou Coord/Gerente Nível 8+)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
-    if ctx['nivel'] < 5: # Assumindo que 5 é professor
+    if ctx['nivel'] < 5: 
         raise HTTPException(status_code=403, detail="Sem permissão para editar aulas.")
 
     try:
+        # Atualiza a coluna 'conteudo' na tabela 'aulas'
         supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
         return {"message": "Aula salva com sucesso!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
