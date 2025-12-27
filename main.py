@@ -1237,5 +1237,44 @@ def get_cursos_didaticos(authorization: str = Header(None)):
         return []
 
 
+# --- MODELO PARA SALVAR CONTEÚDO ---
+class AulaConteudoData(BaseModel):
+    conteudo: str
+
+# --- ROTA: PEGAR CONTEÚDO DA AULA ---
+@app.get("/admin/aula/{id_aula}/conteudo")
+def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Busca o conteúdo no banco
+        response = supabase.table("aulas").select("conteudo, caminho_arquivo").eq("id", id_aula).single().execute()
+        data = response.data
+        
+        # Se tiver conteúdo editado no banco, retorna ele.
+        if data.get('conteudo'):
+            return {"html": data['conteudo'], "tipo": "banco"}
+        
+        # Se não tiver, retorna aviso ou tenta ler o arquivo estático (opcional, mas complexo via API)
+        return {"html": "", "tipo": "vazio"} 
+    except Exception as e:
+        print(f"Erro buscar conteudo: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao carregar aula")
+
+# --- ROTA: SALVAR CONTEÚDO ---
+@app.put("/admin/aula/{id_aula}/salvar")
+def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    
+    # Verifica permissão (apenas Prof, Coord ou Admin)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    if ctx['nivel'] < 5: # Assumindo que 5 é professor
+        raise HTTPException(status_code=403, detail="Sem permissão para editar aulas.")
+
+    try:
+        supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
+        return {"message": "Aula salva com sucesso!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
