@@ -1244,7 +1244,6 @@ class AulaConteudoData(BaseModel):
 
 # Rota para buscar o conteúdo (Banco ou Arquivo)
 @app.get("/admin/aula/{id_aula}/conteudo")
-@app.get("/admin/aula/{id_aula}/conteudo")
 def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
@@ -1252,34 +1251,31 @@ def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
     ctx = get_contexto_usuario(token)
     
     try:
-        conteudo_final = ""
-        origem = "base"
+        # 1. Se for Professor (Nível 5), tenta buscar a VERSÃO DELE primeiro
+        if ctx['nivel'] == 5:
+            try:
+                # .maybe_single() retorna None se não achar, sem dar erro
+                personalizado = supabase.table("conteudos_personalizados")\
+                    .select("conteudo")\
+                    .eq("id_aula", id_aula)\
+                    .eq("id_professor", ctx['id_colaborador'])\
+                    .maybe_single()\
+                    .execute()
+                
+                # Se achou conteúdo personalizado, retorna ele
+                if personalizado.data and personalizado.data.get('conteudo'):
+                    return {"html": personalizado.data['conteudo'], "tipo": "personalizado"}
+            except Exception as e:
+                print(f"Erro ao buscar personalizado (ignorando): {e}")
 
-        # CENÁRIO 1: É UM PROFESSOR EDITANDO?
-        # Se for professor, verificamos se ele já tem uma versão dele.
-        if ctx['nivel'] == 5: 
-            personalizado = supabase.table("conteudos_personalizados")\
-                .select("conteudo")\
-                .eq("id_aula", id_aula)\
-                .eq("id_professor", ctx['id_colaborador'])\
-                .maybe_single()\
-                .execute()
-            
-            if personalizado.data:
-                conteudo_final = personalizado.data['conteudo']
-                origem = "personalizado"
-
-        # CENÁRIO 2: É UM ALUNO ASSISTINDO? (Lógica futura para o visualizador do aluno)
-        # Aqui você precisaria pegar o ID da turma do aluno para saber quem é o professor dele.
-        # Por enquanto, focaremos no editor do professor.
-
-        # SE NÃO ACHOU CONTEÚDO PERSONALIZADO, PEGA O BASE
-        if not conteudo_final:
-            base = supabase.table("aulas").select("conteudo").eq("id", id_aula).single().execute()
-            if base.data:
-                conteudo_final = base.data['conteudo']
+        # 2. Se não achou personalizado (ou se é Coordenação), busca o CONTEÚDO BASE
+        base = supabase.table("aulas").select("conteudo").eq("id", id_aula).maybe_single().execute()
         
-        return {"html": conteudo_final, "tipo": origem}
+        if base.data and base.data.get('conteudo'):
+            return {"html": base.data['conteudo'], "tipo": "base"}
+        
+        # 3. Se não tem em lugar nenhum, retorna vazio para começar do zero
+        return {"html": "", "tipo": "vazio"}
 
     except Exception as e:
         print(f"Erro buscar conteudo: {e}")
@@ -1317,6 +1313,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
