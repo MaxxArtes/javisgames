@@ -1262,24 +1262,46 @@ def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
         # Retorna vazio em caso de erro para não travar o editor
         return {"html": "", "tipo": "erro"}
 
-# Rota para SALVAR o conteúdo editado
 @app.put("/admin/aula/{id_aula}/salvar")
 def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
-    # Verifica permissão (apenas Prof Nível 5 ou Coord/Gerente Nível 8+)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
+
+    # 1. Se for nível baixo (Atendente/Vendedor), bloqueia
     if ctx['nivel'] < 5: 
         raise HTTPException(status_code=403, detail="Sem permissão para editar aulas.")
 
     try:
-        # Atualiza a coluna 'conteudo' na tabela 'aulas'
+        # 2. Busca quem é o dono da aula no banco de dados
+        # Precisamos saber se a aula tem um professor específico
+        aula_info = supabase.table("aulas").select("id_professor").eq("id", id_aula).single().execute()
+        
+        if not aula_info.data:
+            raise HTTPException(status_code=404, detail="Aula não encontrada.")
+            
+        dono_aula = aula_info.data.get('id_professor')
+
+        # 3. Regra de Ouro:
+        # Se for Professor (Nível 5) E a aula tiver dono E o dono não for ele -> BLOQUEIA
+        if ctx['nivel'] == 5:
+            if dono_aula is not None and dono_aula != ctx['id_colaborador']:
+                raise HTTPException(status_code=403, detail="Você não tem permissão para editar a aula de outro professor.")
+            
+            # (Opcional) Se a aula não tem dono (id_professor é null), você decide se ele pode editar ou não.
+            # Geralmente, se é null, é material da escola, então só Coordenação (Nível 8+) mexe.
+            if dono_aula is None:
+                raise HTTPException(status_code=403, detail="Apenas a coordenação pode editar aulas base do sistema.")
+
+        # 4. Se passou pelas verificações, salva
         supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
         return {"message": "Aula salva com sucesso!"}
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 
