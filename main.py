@@ -1244,22 +1244,45 @@ class AulaConteudoData(BaseModel):
 
 # Rota para buscar o conteúdo (Banco ou Arquivo)
 @app.get("/admin/aula/{id_aula}/conteudo")
+@app.get("/admin/aula/{id_aula}/conteudo")
 def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
+    
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    
     try:
-        # Busca se já existe conteúdo salvo no banco
-        response = supabase.table("aulas").select("conteudo, caminho_arquivo").eq("id", id_aula).single().execute()
-        data = response.data
+        conteudo_final = ""
+        origem = "base"
+
+        # CENÁRIO 1: É UM PROFESSOR EDITANDO?
+        # Se for professor, verificamos se ele já tem uma versão dele.
+        if ctx['nivel'] == 5: 
+            personalizado = supabase.table("conteudos_personalizados")\
+                .select("conteudo")\
+                .eq("id_aula", id_aula)\
+                .eq("id_professor", ctx['id_colaborador'])\
+                .maybe_single()\
+                .execute()
+            
+            if personalizado.data:
+                conteudo_final = personalizado.data['conteudo']
+                origem = "personalizado"
+
+        # CENÁRIO 2: É UM ALUNO ASSISTINDO? (Lógica futura para o visualizador do aluno)
+        # Aqui você precisaria pegar o ID da turma do aluno para saber quem é o professor dele.
+        # Por enquanto, focaremos no editor do professor.
+
+        # SE NÃO ACHOU CONTEÚDO PERSONALIZADO, PEGA O BASE
+        if not conteudo_final:
+            base = supabase.table("aulas").select("conteudo").eq("id", id_aula).single().execute()
+            if base.data:
+                conteudo_final = base.data['conteudo']
         
-        # Se tiver HTML salvo no banco, retorna ele
-        if data.get('conteudo'):
-            return {"html": data['conteudo'], "tipo": "banco"}
-        
-        # Se não tiver, retorna vazio (para o professor criar do zero)
-        return {"html": "", "tipo": "vazio"} 
+        return {"html": conteudo_final, "tipo": origem}
+
     except Exception as e:
         print(f"Erro buscar conteudo: {e}")
-        # Retorna vazio em caso de erro para não travar o editor
         return {"html": "", "tipo": "erro"}
 
 @app.put("/admin/aula/{id_aula}/salvar")
@@ -1268,40 +1291,33 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
-
-    # 1. Se for nível baixo (Atendente/Vendedor), bloqueia
-    if ctx['nivel'] < 5: 
-        raise HTTPException(status_code=403, detail="Sem permissão para editar aulas.")
-
+    
     try:
-        # 2. Busca quem é o dono da aula no banco de dados
-        # Precisamos saber se a aula tem um professor específico
-        aula_info = supabase.table("aulas").select("id_professor").eq("id", id_aula).single().execute()
+        # 1. Se for COORDENAÇÃO (Nível 8+), edita a BASE original
+        if ctx['nivel'] >= 8:
+            supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
+            return {"message": "Aula BASE atualizada (Modo Coordenação)."}
+
+        # 2. Se for PROFESSOR (Nível 5), salva na tabela PERSONALIZADA
+        elif ctx['nivel'] == 5:
+            # Upsert: Tenta inserir, se já existir (mesma aula+prof), atualiza.
+            dados_insert = {
+                "id_aula": id_aula,
+                "id_professor": ctx['id_colaborador'],
+                "conteudo": dados.conteudo
+            }
+            
+            # O Supabase Python faz upsert assim (precisa da constraint unique criada no SQL)
+            supabase.table("conteudos_personalizados").upsert(dados_insert, on_conflict="id_aula, id_professor").execute()
+            
+            return {"message": "Sua versão personalizada foi salva!"}
         
-        if not aula_info.data:
-            raise HTTPException(status_code=404, detail="Aula não encontrada.")
-            
-        dono_aula = aula_info.data.get('id_professor')
+        else:
+            raise HTTPException(status_code=403, detail="Sem permissão.")
 
-        # 3. Regra de Ouro:
-        # Se for Professor (Nível 5) E a aula tiver dono E o dono não for ele -> BLOQUEIA
-        if ctx['nivel'] == 5:
-            if dono_aula is not None and dono_aula != ctx['id_colaborador']:
-                raise HTTPException(status_code=403, detail="Você não tem permissão para editar a aula de outro professor.")
-            
-            # (Opcional) Se a aula não tem dono (id_professor é null), você decide se ele pode editar ou não.
-            # Geralmente, se é null, é material da escola, então só Coordenação (Nível 8+) mexe.
-            if dono_aula is None:
-                raise HTTPException(status_code=403, detail="Apenas a coordenação pode editar aulas base do sistema.")
-
-        # 4. Se passou pelas verificações, salva
-        supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
-        return {"message": "Aula salva com sucesso!"}
-
-    except HTTPException as he:
-        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
