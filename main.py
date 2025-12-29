@@ -1203,29 +1203,79 @@ def get_historico_unificado(authorization: str = Header(None)):
 @app.get("/conteudo-didatico/cursos")
 def get_cursos_didaticos(authorization: str = Header(None)):
     """
-    Retorna a estrutura completa de cursos, módulos e aulas.
-    CORRIGIDO: Não busca id_professor na tabela aulas para evitar erro de coluna inexistente.
+    Retorna a estrutura completa de cursos.
+    LÓGICA NOVA: Verifica na tabela 'tb_turmas' se o professor logado tem permissão.
     """
     if not authorization: raise HTTPException(status_code=401)
     
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token) # Pega dados do usuário logado (ID, Nível)
+
     try:
-        # Removi 'id_professor' de dentro de aulas(...)
+        # 1. Busca os cursos (SEM pedir id_professor para não dar erro)
         response = supabase.table("cursos")\
-            .select("id, titulo, icone, ordem, id_professor, modulos(id, titulo, ordem, aulas(id, titulo, caminho_arquivo, ordem))")\
+            .select("id, titulo, icone, ordem, modulos(id, titulo, ordem, aulas(id, titulo, caminho_arquivo, ordem))")\
             .eq("ativo", True)\
             .order("ordem")\
             .execute()
 
         cursos = response.data
         
-        # Ordenação manual no Python
+        # 2. Se for Professor (Nível 5), verifica quais cursos ele dá aula na tb_turmas
+        cursos_do_professor = []
+        if ctx['nivel'] == 5:
+            # Busca turmas deste professor
+            res_turmas = supabase.table("tb_turmas")\
+                .select("nome_curso")\
+                .eq("id_professor", ctx['id_colaborador'])\
+                .execute()
+            
+            # Cria uma lista de nomes (ex: ['GAME DEV', 'DESIGNER START'])
+            if res_turmas.data:
+                cursos_do_professor = [t['nome_curso'].upper().strip() for t in res_turmas.data]
+
+        # 3. Processa a lista para o Frontend
         for curso in cursos:
+            # Ordenação dos módulos
             if 'modulos' in curso and curso['modulos']:
                 curso['modulos'].sort(key=lambda x: x['ordem'])
                 for modulo in curso['modulos']:
                     if 'aulas' in modulo and modulo['aulas']:
                         modulo['aulas'].sort(key=lambda x: x['ordem'])
-        
+            
+            # --- O PULO DO GATO ---
+            # Se o professor dá aula deste curso, injetamos o ID dele no objeto.
+            # O Frontend vai ler isso e liberar o botão de editar.
+            if ctx['nivel'] == 5:
+                # Compara 'Game Dev' (Banco) com 'GAME DEV' (Turmas)
+                titulo_banco = curso.get('titulo', '').upper().strip()
+                
+                # Mapeamento manual para garantir compatibilidade de nomes
+                mapa_nomes = {
+                    "GAME DEV": ["GAME DEV", "GAME DEVELOPER"],
+                    "GAME PRO": ["GAME PRO", "GAME PROFESSIONAL"],
+                    "DESIGNER START": ["DESIGNER START", "DESIGN START"],
+                    "STREAMING": ["STREAMING", "STREAMER"]
+                }
+                
+                tem_permissao = False
+                
+                # Verifica direto ou pelo mapa
+                if titulo_banco in cursos_do_professor:
+                    tem_permissao = True
+                else:
+                    # Tenta verificar variações do nome
+                    for nome_turma in cursos_do_professor:
+                        if nome_turma in mapa_nomes.get(titulo_banco, []):
+                            tem_permissao = True
+                            break
+                
+                # Se confirmou que ele é professor desse curso, injeta o ID
+                if tem_permissao:
+                    curso['id_professor'] = ctx['id_colaborador']
+                else:
+                    curso['id_professor'] = None # Não é dono
+
         return cursos
 
     except Exception as e:
@@ -1308,6 +1358,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
