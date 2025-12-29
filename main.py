@@ -1289,32 +1289,30 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     ctx = get_contexto_usuario(token)
     
     try:
-        # 1. Se for COORDENAÇÃO (Nível 8+), edita a BASE original
+        # A. COORDENAÇÃO (Nível 8+): Edita a AULA BASE (Afeta todos que não tem cópia)
         if ctx['nivel'] >= 8:
             supabase.table("aulas").update({"conteudo": dados.conteudo}).eq("id", id_aula).execute()
-            return {"message": "Aula BASE atualizada (Modo Coordenação)."}
+            return {"message": "Conteúdo BASE atualizado (Modo Coordenação)."}
 
-        # 2. Se for PROFESSOR (Nível 5), salva na tabela PERSONALIZADA
+        # B. PROFESSOR (Nível 5): Salva na tabela PERSONALIZADA (Cópia dele)
         elif ctx['nivel'] == 5:
-            # Upsert: Tenta inserir, se já existir (mesma aula+prof), atualiza.
-            dados_insert = {
+            payload = {
                 "id_aula": id_aula,
                 "id_professor": ctx['id_colaborador'],
                 "conteudo": dados.conteudo
             }
-            
-            # O Supabase Python faz upsert assim (precisa da constraint unique criada no SQL)
-            supabase.table("conteudos_personalizados").upsert(dados_insert, on_conflict="id_aula, id_professor").execute()
+            # Upsert garante que cria se não existe, ou atualiza se já existe
+            # Requer que a tabela tenha constraint unique(id_aula, id_professor)
+            supabase.table("conteudos_personalizados").upsert(payload, on_conflict="id_aula,id_professor").execute()
             
             return {"message": "Sua versão personalizada foi salva!"}
         
         else:
-            raise HTTPException(status_code=403, detail="Sem permissão.")
+            raise HTTPException(status_code=403, detail="Sem permissão para editar.")
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        print(f"Erro ao salvar: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
 
 
 
