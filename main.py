@@ -1210,7 +1210,7 @@ def get_cursos_didaticos(authorization: str = Header(None)):
     try:
         # A sintaxe do select aninhado no Supabase Python segue o padrão PostgREST
         response = supabase.table("cursos")\
-            .select("id, titulo, icone, ordem, modulos(id, titulo, ordem, aulas(id, titulo, caminho_arquivo, ordem))")\
+            .select("id, titulo, icone, ordem, id_professor, modulos(id, titulo, ordem, aulas(id, titulo, caminho_arquivo, ordem, id_professor))")\
             .eq("ativo", True)\
             .order("ordem")\
             .execute()
@@ -1279,6 +1279,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
         return {"message": "Aula salva com sucesso!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
