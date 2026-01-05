@@ -787,24 +787,23 @@ def admin_responder(dados: ChatAdminReply, authorization: str = Header(None)):
     
     try:
         token = authorization.split(" ")[1]
-        ctx = get_contexto_usuario(token) # Pega quem está logado
-        
-        # LÓGICA DE IDENTIFICAÇÃO DO REMETENTE
-        # Se for Professor (6) ou Coordenação (4), salvamos o ID deles para cair no chat privado específico.
-        # Se for outros cargos (Vendas/Direção), salvamos como NULL para cair no "Suporte Geral".
+        ctx = get_contexto_usuario(token) # Agora traz o 'id_cargo' corretamente
         
         id_colab_save = None
         
-        # IDs de cargos que têm chat específico (ajuste conforme seu banco tb_cargos)
-        # Ex: 6 = Professor, 4 = Coord. Pedagógico
-        if ctx['id_cargo'] in [4, 6]:
+        # LÓGICA CORRIGIDA:
+        # Se for Nível 4 (Coord), 5/6 (Prof) ou >= 8 (Gerente/Diretor),
+        # salvamos o ID para a mensagem aparecer no chat privado (com foto e nome).
+        # Se for Nível 3 (Vendedor) ou 2 (Secretaria), fica NULL (Suporte Geral).
+        
+        if ctx['nivel'] >= 4:
             id_colab_save = ctx['id_colaborador']
             
         supabase.table("tb_chat").insert({
             "id_aluno": dados.id_aluno,
             "mensagem": dados.mensagem,
             "enviado_por_admin": True,
-            "id_colaborador": id_colab_save # Salva quem respondeu
+            "id_colaborador": id_colab_save
         }).execute()
         
         return {"message": "Respondido"}
@@ -1373,6 +1372,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
