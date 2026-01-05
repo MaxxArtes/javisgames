@@ -992,13 +992,18 @@ def get_contatos_aluno(authorization: str = Header(None)):
                     .in_("codigo_turma", codigos_turmas)\
                     .execute()
                 
-                prof_curso_map = {}
+                # CORREÇÃO: Mapear ID do Professor -> Dados da Turma (Curso e Código)
+                prof_info_map = {} 
                 ids_professores = []
                 
                 for t in turmas.data:
                     pid = t.get('id_professor')
                     if pid:
-                        prof_curso_map[str(pid)] = t['nome_curso']
+                        # Guarda curso E o código da turma correta para este professor
+                        prof_info_map[pid] = {
+                            "curso": t['nome_curso'], 
+                            "codigo_turma": t['codigo_turma']
+                        }
                         ids_professores.append(pid)
 
                 # 3. Dados dos Professores
@@ -1010,16 +1015,23 @@ def get_contatos_aluno(authorization: str = Header(None)):
                         
                     for p in profs.data:
                         pid = p['id_colaborador']
-                        nome_curso = prof_curso_map.get(str(pid)) or "Professor"
+                        
+                        # Recupera os dados corretos do mapa usando o ID do professor
+                        info_turma = prof_info_map.get(pid)
+                        
+                        if info_turma:
+                            nome_curso = info_turma['curso']
+                            codigo_turma = info_turma['codigo_turma']
 
-                        contatos.append({
-                            "id": pid,
-                            "nome": p['nome_completo'],
-                            "cargo": f"Prof. {nome_curso}",
-                            "tipo": "Professor",
-                            "codigo_turma_grupo": t['codigo_turma']
-                        })
-        except Exception:
+                            contatos.append({
+                                "id": pid,
+                                "nome": p['nome_completo'],
+                                "cargo": f"Prof. {nome_curso}",
+                                "tipo": "Professor",
+                                "codigo_turma_grupo": codigo_turma # Agora usa o código correto mapeado
+                            })
+        except Exception as e:
+            print(f"Erro ao buscar professores: {e}")
             pass 
 
         return contatos
@@ -1372,6 +1384,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
