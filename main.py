@@ -173,11 +173,14 @@ def calcular_previsao(data_inicio_str: str, qtd: int):
     except: return None
 
 # --- CONTEXTO DO USUÁRIO (MULTI-CIDADE) ---
+# No main.py, procure por "def get_contexto_usuario(token):" e substitua por:
+
 def get_contexto_usuario(token: str):
     try:
         user = supabase.auth.get_user(token)
         user_id = user.user.id
         
+        # O select já buscava o id_cargo, mas não retornava no dicionário final
         resp = supabase.table("tb_colaboradores")\
             .select("id_colaborador, id_unidade, id_cargo, tb_cargos!fk_cargos(nivel_acesso)")\
             .eq("user_id", user_id)\
@@ -189,6 +192,7 @@ def get_contexto_usuario(token: str):
             "user_id": user_id,
             "id_colaborador": dados['id_colaborador'],
             "id_unidade": dados['id_unidade'],
+            "id_cargo": dados['id_cargo'], # <--- ADICIONADO AQUI
             "nivel": dados['tb_cargos']['nivel_acesso']
         }
     except Exception as e:
@@ -1369,6 +1373,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
