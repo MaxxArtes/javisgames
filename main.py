@@ -777,25 +777,36 @@ def admin_ler_mensagens(id_aluno: int):
     return msgs.data
 
 @app.post("/admin/chat/responder")
-def admin_responder(dados: ChatAdminReply):
+def admin_responder(dados: ChatAdminReply, authorization: str = Header(None)):
+    if not authorization: 
+        raise HTTPException(status_code=401, detail="Token ausente")
+    
     try:
+        token = authorization.split(" ")[1]
+        ctx = get_contexto_usuario(token) # Pega quem está logado
+        
+        # LÓGICA DE IDENTIFICAÇÃO DO REMETENTE
+        # Se for Professor (6) ou Coordenação (4), salvamos o ID deles para cair no chat privado específico.
+        # Se for outros cargos (Vendas/Direção), salvamos como NULL para cair no "Suporte Geral".
+        
+        id_colab_save = None
+        
+        # IDs de cargos que têm chat específico (ajuste conforme seu banco tb_cargos)
+        # Ex: 6 = Professor, 4 = Coord. Pedagógico
+        if ctx['id_cargo'] in [4, 6]:
+            id_colab_save = ctx['id_colaborador']
+            
         supabase.table("tb_chat").insert({
             "id_aluno": dados.id_aluno,
             "mensagem": dados.mensagem,
-            "enviado_por_admin": True
+            "enviado_por_admin": True,
+            "id_colaborador": id_colab_save # Salva quem respondeu
         }).execute()
+        
         return {"message": "Respondido"}
     except Exception as e:
+        print(f"Erro ao responder: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/inscrever-aula")
-def inscrever_aula(dados: InscricaoAulaData):
-    try:
-        numero_admin = "5565981350686"
-        mensagem = f"🎮 *NOVA INSCRIÇÃO*\n👤 {dados.nome}\n📧 {dados.email}\n📱 {dados.telefone}"
-        enviar_mensagem_zapi(numero_admin, mensagem)
-        return {"message": "Sucesso"}
-    except: raise HTTPException(status_code=500)
 
 @app.post("/chat/enviar")
 def enviar_mensagem_chat(dados: MensagemChat):
@@ -1358,6 +1369,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
