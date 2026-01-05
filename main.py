@@ -679,7 +679,7 @@ def admin_listar_professores(authorization: str = Header(None)):
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
     try:
-        query = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_cargo", 6)
+        query = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").in_("id_cargo", [6, 4])
         if ctx['nivel'] < 9: query = query.eq("id_unidade", ctx['id_unidade'])
         return query.execute().data
     except: return []
@@ -1358,6 +1358,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
