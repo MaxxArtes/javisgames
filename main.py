@@ -569,7 +569,7 @@ def admin_agenda(authorization: str = Header(None)):
                 "turma": rep['codigo_turma'],
                 "presenca": rep['presenca'],
                 "observacoes": rep['observacoes'],
-                "arquivo": rep['arquivo_assinatura']
+                "arquivo": rep['arquivo_assinatura'],
                 "extendedProps": { 
                     "conteudo": rep['conteudo_aula'],
                     "id_criador": rep['criado_por']
@@ -1465,6 +1465,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
