@@ -109,6 +109,14 @@ class NovoAlunoData(BaseModel):
     telefone: str | None = None
     data_nascimento: str | None = None
 
+class AlunoEdicaoData(BaseModel):
+    nome: str | None = None
+    email: str | None = None
+    celular: str | None = None
+    telefone: str | None = None
+    cpf: str | None = None
+    turma_codigo: str | None = None # Para trocar de turma se precisar
+
 class ReposicaoData(BaseModel):
     id_aluno: int
     data_hora: str 
@@ -1489,6 +1497,41 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
 
 
+@app.put("/admin/editar-aluno/{id_aluno}")
+def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    
+    # Apenas Nível 3+ (Vendedor) pode editar alunos
+    if ctx['nivel'] < 3: 
+        raise HTTPException(status_code=403, detail="Sem permissão.")
+
+    try:
+        # 1. Atualiza dados pessoais (tb_alunos)
+        updates_aluno = {}
+        if dados.nome: updates_aluno["nome_completo"] = dados.nome.upper()
+        if dados.email: updates_aluno["email"] = dados.email
+        if dados.celular: updates_aluno["celular"] = dados.celular
+        if dados.telefone: updates_aluno["telefone"] = dados.telefone
+        if dados.cpf: updates_aluno["cpf"] = dados.cpf
+        
+        if updates_aluno:
+            supabase.table("tb_alunos").update(updates_aluno).eq("id_aluno", id_aluno).execute()
+
+        # 2. Atualiza a turma (tb_matriculas) se foi enviada
+        if dados.turma_codigo:
+            # Verifica se a turma existe
+            check_turma = supabase.table("tb_turmas").select("codigo_turma").eq("codigo_turma", dados.turma_codigo).execute()
+            if check_turma.data:
+                supabase.table("tb_matriculas").update({"codigo_turma": dados.turma_codigo}).eq("id_aluno", id_aluno).execute()
+            else:
+                raise HTTPException(status_code=400, detail="Turma não encontrada.")
+
+        return {"message": "Aluno atualizado com sucesso!"}
+    except Exception as e:
+        print(f"Erro update aluno: {e}")
+        raise HTTPException(status_code=400, detail="Erro ao atualizar aluno.")
 
 
 
