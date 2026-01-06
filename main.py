@@ -71,6 +71,10 @@ class PerfilUpdateData(BaseModel):
     email_login: str | None = None
     nova_senha: str | None = None
 
+class ReposicaoEdicaoData(BaseModel):
+    data_hora: str | None = None
+    conteudo_aula: str | None = None
+
 class ReposicaoUpdate(BaseModel):
     presenca: bool | None = None # True=Veio, False=Faltou, None=Pendente
     observacoes: str | None = None
@@ -370,7 +374,7 @@ def get_dados_funcionario(authorization: str = Header(None)):
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
-        user_id = user.user.id
+        user_id = user.user.id # UUID do Auth
         
         response = supabase.table("tb_colaboradores")\
             .select("id_colaborador, nome_completo, telefone, email, id_cargo, id_unidade, tb_cargos!fk_cargos(nome_cargo, nivel_acesso)")\
@@ -383,6 +387,7 @@ def get_dados_funcionario(authorization: str = Header(None)):
         
         return {
             "id_colaborador": funcionario['id_colaborador'],
+            "user_id_auth": user_id, # <--- NOVO CAMPO IMPORTANTE (UUID)
             "nome": funcionario['nome_completo'],
             "telefone": funcionario['telefone'],
             "email_contato": funcionario['email'],
@@ -392,7 +397,7 @@ def get_dados_funcionario(authorization: str = Header(None)):
         }
     except Exception as e:
         raise HTTPException(status_code=403, detail="Erro interno")
-
+        
 # 4. CADASTRO DE ALUNO
 @app.post("/admin/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
@@ -448,6 +453,48 @@ def admin_listar_alunos(authorization: str = Header(None)):
         return []
 
 # 5. REPOSIÇÕES E AGENDA
+# --- HELPER PERMISSÃO REPOSIÇÃO ---
+def verificar_permissao_repo(id_repo: str, ctx: dict):
+    """
+    Verifica se o usuário pode mexer na reposição.
+    Retorna True se for Nível >= 8 OU se for o dono.
+    """
+    # 1. Se for Gerência/Diretoria (8+), libera geral
+    if ctx['nivel'] >= 8:
+        return True
+
+    # 2. Busca a reposição para ver quem criou
+    resp = supabase.table("tb_reposicoes").select("criado_por").eq("id", id_repo).maybe_single().execute()
+    
+    if not resp.data:
+        raise HTTPException(status_code=404, detail="Reposição não encontrada.")
+    
+    dono_uuid = resp.data.get('criado_por')
+
+    # 3. Compara o UUID do dono com o UUID do usuário logado
+    # ctx['user_id'] vem da função get_contexto_usuario
+    if str(dono_uuid) == str(ctx['user_id']):
+        return True
+
+@app.delete("/admin/reposicao/{id_repo}")
+def deletar_reposicao(id_repo: str, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # Verifica permissão (Nível 8+ ou Criador)
+    if not verificar_permissao_repo(id_repo, ctx):
+        raise HTTPException(status_code=403, detail="Você não tem permissão para excluir esta reposição.")
+
+    try:
+        supabase.table("tb_reposicoes").delete().eq("id", id_repo).execute()
+        return {"message": "Reposição excluída com sucesso."}
+    except Exception as e:
+        print(f"Erro delete repo: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao excluir.")
+        
+    return False
 @app.post("/admin/agendar-reposicao")
 def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -502,17 +549,13 @@ def admin_agenda(authorization: str = Header(None)):
         eventos = []
         # REPOSIÇÕES (Filtrar se não for diretor)
         if ctx['nivel'] < 9:
-            alunos = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
-            ids = [a['id_aluno'] for a in alunos.data]
-            resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").in_("id_aluno", ids).execute()
+             # ... (seu código existente de filtro por unidade) ...
+             resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").in_("id_aluno", ids).execute()
         else:
-            resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").execute()
+             resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").execute()
         
         for rep in resp_repo.data:
-            nome_aluno = "Aluno?"
-            if rep.get('tb_alunos'): nome_aluno = rep['tb_alunos'].get('nome_completo', 'Aluno?')
-            nome_prof = "?"
-            if rep.get('tb_colaboradores'): nome_prof = rep['tb_colaboradores'].get('nome_completo', '?')
+            # ... (seu código de nomes) ...
             
             eventos.append({
                 "id": rep['id'],
@@ -527,6 +570,10 @@ def admin_agenda(authorization: str = Header(None)):
                 "presenca": rep['presenca'],
                 "observacoes": rep['observacoes'],
                 "arquivo": rep['arquivo_assinatura']
+                "extendedProps": { 
+                    "conteudo": rep['conteudo_aula'],
+                    "id_criador": rep['criado_por']
+                }
             })
 
         # TURMAS (Aulas Recorrentes)
@@ -578,9 +625,43 @@ def atualizar_reposicao_completa(id_repo: str, presenca: str = Form(...), observ
         return {"message": "Atualizado!"}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
-@app.patch("/admin/reposicao/{id_repo}")
-def atualizar_reposicao(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
+@app.patch("/admin/editar-reposicao/{id_repo}")
+def atualizar_dados_reposicao(id_repo: str, dados: ReposicaoEdicaoData, authorization: str = Header(None)):
+    # CORREÇÃO: Usamos ReposicaoEdicaoData para não exigir todos os campos (aluno, prof, etc)
     if not authorization: raise HTTPException(status_code=401)
+    
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    if not verificar_permissao_repo(id_repo, ctx):
+        raise HTTPException(status_code=403, detail="Sem permissão para editar.")
+
+    try:
+        updates = {}
+        # Só adiciona no update se o dado foi enviado
+        if dados.data_hora:
+            updates["data_reposicao"] = dados.data_hora
+        if dados.conteudo_aula:
+            updates["conteudo_aula"] = dados.conteudo_aula
+            
+        if updates:
+            supabase.table("tb_reposicoes").update(updates).eq("id", id_repo).execute()
+            
+        return {"message": "Atualizado!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+# --- ATUALIZAÇÃO: PRESENÇA (PUT/PATCH existente) ---
+@app.patch("/admin/reposicao/{id_repo}")
+def atualizar_reposicao_status(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    
+    # Adiciona a verificação aqui também
+    if not verificar_permissao_repo(id_repo, ctx):
+        raise HTTPException(status_code=403, detail="Apenas o criador ou gerência pode alterar.")
+
     try:
         supabase.table("tb_reposicoes").update({"presenca": dados.presenca, "observacoes": dados.observacoes}).eq("id", id_repo).execute()
         return {"message": "OK"}
@@ -1384,6 +1465,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
