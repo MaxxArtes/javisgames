@@ -541,44 +541,64 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     except Exception as e: raise HTTPException(status_code=400, detail="Erro interno.")
         
 @app.get("/admin/agenda-geral")
+@app.get("/admin/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
     ctx = get_contexto_usuario(token)
     try:
         eventos = []
-        # REPOSIÇÕES (Filtrar se não for diretor)
-        if ctx['nivel'] < 9:
-             # ... (seu código existente de filtro por unidade) ...
-             resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").in_("id_aluno", ids).execute()
-        else:
-             resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").execute()
         
-        for rep in resp_repo.data:
-            # ... (seu código de nomes) ...
+        # 1. BUSCA REPOSIÇÕES
+        if ctx['nivel'] < 9:
+            # Filtra alunos da unidade para pegar os IDs
+            alunos = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
+            ids = [a['id_aluno'] for a in alunos.data]
             
-            eventos.append({
-                "id": rep['id'],
-                "title": f"🔄 Reposição: {nome_aluno}",
-                "start": rep['data_reposicao'],
-                "color": "#ff4d4d",
-                "tipo": "reposicao",
-                "nome_aluno": nome_aluno,
-                "nome_prof": nome_prof,
-                "conteudo": rep['conteudo_aula'],
-                "turma": rep['codigo_turma'],
-                "presenca": rep['presenca'],
-                "observacoes": rep['observacoes'],
-                "arquivo": rep['arquivo_assinatura'],
-                "extendedProps": { 
+            # Busca reposições desses alunos
+            if not ids: 
+                resp_repo = None # Se não tem alunos, não tem reposição
+            else:
+                resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").in_("id_aluno", ids).execute()
+        else:
+            # Diretor vê tudo
+            resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").execute()
+        
+        if resp_repo and resp_repo.data:
+            for rep in resp_repo.data:
+                # Extrai nomes com segurança
+                nome_aluno = "Aluno?"
+                if rep.get('tb_alunos'): 
+                    nome_aluno = rep['tb_alunos'].get('nome_completo', 'Aluno?')
+                
+                nome_prof = "?"
+                if rep.get('tb_colaboradores'): 
+                    nome_prof = rep['tb_colaboradores'].get('nome_completo', '?')
+                
+                eventos.append({
+                    "id": rep['id'],
+                    "title": f"🔄 Reposição: {nome_aluno}",
+                    "start": rep['data_reposicao'],
+                    "color": "#ff4d4d",
+                    "tipo": "reposicao",
+                    "nome_aluno": nome_aluno,
+                    "nome_prof": nome_prof,
                     "conteudo": rep['conteudo_aula'],
-                    "id_criador": rep['criado_por']
-                }
-            })
+                    "turma": rep['codigo_turma'],
+                    "presenca": rep['presenca'],
+                    "observacoes": rep['observacoes'],
+                    "arquivo": rep['arquivo_assinatura'],
+                    "extendedProps": { 
+                        "conteudo": rep['conteudo_aula'],
+                        "id_criador": rep['criado_por']
+                    }
+                })
 
-        # TURMAS (Aulas Recorrentes)
+        # 2. BUSCA TURMAS (Aulas Recorrentes)
         query_t = supabase.table("tb_turmas").select("*, tb_colaboradores(nome_completo)").in_("status", ["Em Andamento", "Planejada"])
-        if ctx['nivel'] < 9: query_t = query_t.eq("id_unidade", ctx['id_unidade'])
+        if ctx['nivel'] < 9: 
+            query_t = query_t.eq("id_unidade", ctx['id_unidade'])
+        
         resp_turmas = query_t.execute()
 
         for turma in resp_turmas.data:
@@ -603,7 +623,9 @@ def admin_agenda(authorization: str = Header(None)):
             except: continue
 
         return eventos
-    except: return []
+    except Exception as e:
+        print(f"Erro agenda: {e}") 
+        return []
 
 @app.put("/admin/reposicao-completa/{id_repo}")
 def atualizar_reposicao_completa(id_repo: str, presenca: str = Form(...), observacoes: str = Form(None), arquivo: UploadFile = File(None), authorization: str = Header(None)):
@@ -1465,6 +1487,7 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
+
 
 
 
