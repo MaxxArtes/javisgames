@@ -453,7 +453,7 @@ def admin_listar_alunos(authorization: str = Header(None)):
     ctx = get_contexto_usuario(token)
     try:
         # Agora buscamos também o 'tipo_turma' dentro de tb_turmas, através da matrícula
-        query = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro, tb_turmas(tipo_turma))")
+        query = supabase.table("tb_alunos").select("*, tb_matriculas(codigo_turma, status_financeiro, tb_turmas(tipo_turma, dia_semana))")
         if ctx['nivel'] < 9: query = query.eq("id_unidade", ctx['id_unidade'])
         return query.execute().data
     except Exception as e: 
@@ -1532,6 +1532,7 @@ def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str
     except Exception as e:
         print(f"Erro update aluno: {e}")
         raise HTTPException(status_code=400, detail="Erro ao atualizar aluno.")
+
 
 
 
