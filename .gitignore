@@ -1,0 +1,74 @@
+# Arquivos de ambiente e credenciais
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+*.log
+app.log
+logs/
+*.log.*
+
+# Arquivos temporários do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ambientes virtuais
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs e editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Arquivos de banco de dados local
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos de upload temporários
+uploads/
+temp/
+tmp/
+
+# Certificados e chaves
+*.pem
+*.key
+*.cert
+*.crt
+
+# Configurações locais
+config.local.py
+settings.local.py
+
+# Cache
+.cache/
+*.cache
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Arquivos do sistema
+Thumbs.db
+Desktop.ini
