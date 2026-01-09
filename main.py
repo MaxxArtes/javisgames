@@ -51,8 +51,12 @@ if not url or not key:
 supabase: Client = create_client(url, key)
 
 # --- CREDENCIAIS Z-API ---
-ZAPI_INSTANCE_ID = "3EB841CFDDB82238F05676920E0B7E08"
-ZAPI_TOKEN = "9C37DABF607A4D31B7D53FA6"
+ZAPI_INSTANCE_ID = os.getenv("ZAPI_INSTANCE_ID")
+ZAPI_TOKEN = os.getenv("ZAPI_TOKEN")
+
+if not ZAPI_INSTANCE_ID or not ZAPI_TOKEN:
+    raise ValueError("Verifique as variáveis ZAPI_INSTANCE_ID e ZAPI_TOKEN no ambiente.")
+
 ZAPI_BASE_URL = f"https://api.z-api.io/instances/{ZAPI_INSTANCE_ID}/token/{ZAPI_TOKEN}/send-text"
 
 
