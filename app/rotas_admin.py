@@ -20,7 +20,8 @@ from app.modelos import (
     ReposicaoData,
     ChatAdminReply,
     StatusUpdateData,
-    NovoFuncionarioData
+    NovoFuncionarioData,
+    AulaConteudoData
 )
 
 # Logger

@@ -115,3 +115,7 @@ class NovoFuncionarioData(BaseModel):
     senha: str
     telefone: str
     id_cargo: int
+
+
+class AulaConteudoData(BaseModel):
+    conteudo: str
