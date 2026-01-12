@@ -1119,66 +1119,74 @@ def calcular_progresso_automatico(data_inicio_str, total_aulas):
     # Retorna a porcentagem
     return round((aulas_liberadas / total_aulas) * 100)
 
+# Rota para o aluno buscar os contatos (Professores e Secretaria)
 @router.get("/aluno/meus-contatos")
 def get_contatos_aluno(authorization: str = Header(None)):
-    if not authorization: 
-        raise HTTPException(status_code=401)
-    
+    if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
-        # 1. Busca o ID do aluno e a turma dele
-        aluno_resp = supabase.table("tb_alunos").select("id_aluno, tb_matriculas(codigo_turma)").eq("user_id", user_id).single().execute()
-        if not aluno_resp.data:
-            return []
+        # Busca o ID do aluno e a matrícula dele
+        aluno = supabase.table("tb_alunos").select("id_aluno, tb_matriculas(codigo_turma)").eq("user_id", user_id).single().execute()
+        if not aluno.data: return []
         
-        id_aluno = aluno_resp.data['id_aluno']
-        # Pega o primeiro código de turma da lista de matrículas
-        matriculas = aluno_resp.data.get('tb_matriculas', [])
+        matriculas = aluno.data.get('tb_matriculas', [])
         codigo_turma = matriculas[0]['codigo_turma'] if matriculas else None
-
         contatos = []
 
-        # 2. Busca o Professor da Turma para chat Privado e Grupo
         if codigo_turma:
-            turma_resp = supabase.table("tb_turmas").select("codigo_turma, nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", codigo_turma).single().execute()
-            
-            if turma_resp.data:
-                turma = turma_resp.data
-                prof = turma.get('tb_colaboradores')
-                
-                # Card do Grupo da Turma
+            turma = supabase.table("tb_turmas").select("nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", codigo_turma).single().execute()
+            if turma.data:
+                # Card do Professor
                 contatos.append({
-                    "id": f"grupo-{codigo_turma}",
-                    "nome": f"Grupo {turma['nome_curso']}",
-                    "cargo": turma['nome_curso'],
-                    "tipo": "Professor",
-                    "codigo_turma_grupo": codigo_turma
+                    "id": turma.data['id_professor'],
+                    "nome": turma.data['tb_colaboradores']['nome_completo'],
+                    "cargo": f"Prof. {turma.data['nome_curso']}",
+                    "tipo": "Professor"
                 })
-
-                # Card do Professor (Privado)
-                if prof:
-                    contatos.append({
-                        "id": turma['id_professor'],
-                        "nome": prof['nome_completo'],
-                        "cargo": f"Prof. {turma['nome_curso']}",
-                        "tipo": "Professor",
-                        "codigo_turma_grupo": None
-                    })
-
-        # 3. Card da Secretaria/Suporte Geral (Sempre aparece)
-        contatos.append({
-            "id": "geral",
-            "nome": "Suporte Javis",
-            "cargo": "Secretaria / Coordenação",
-            "tipo": "Admin",
-            "codigo_turma_grupo": None
-        })
-
+        
+        # Suporte Geral sempre disponível
+        contatos.append({"id": "geral", "nome": "Suporte Javis", "cargo": "Secretaria", "tipo": "Admin"})
         return contatos
-    except Exception as e:
-        print(f"Erro ao buscar contatos: {e}")
-        return []
+    except: return []
 
+# Rota para buscar o histórico de mensagens com um contato específico
+@router.get("/chat/mensagens-com/{target}")
+def get_mensagens_chat(target: str, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user_id = supabase.auth.get_user(token).user.id
+        aluno = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).single().execute()
+        id_aluno = aluno.data['id_aluno']
+
+        query = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno)
+        
+        if target == 'geral':
+            query = query.is_("id_colaborador", "null")
+        else:
+            query = query.eq("id_colaborador", int(target))
+            
+        res = query.order("created_at").execute()
+        return res.data
+    except: return []
+
+# Rota para o aluno enviar uma mensagem direta
+@router.post("/chat/enviar-direto")
+def enviar_mensagem_aluno(dados: dict, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user_id = supabase.auth.get_user(token).user.id
+        aluno = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).single().execute()
+        
+        supabase.table("tb_chat").insert({
+            "id_aluno": aluno.data['id_aluno'],
+            "mensagem": dados['mensagem'],
+            "id_colaborador": dados.get('id_colaborador'),
+            "enviado_por_admin": False
+        }).execute()
+        return {"status": "ok"}
+    except: raise HTTPException(status_code=400)
