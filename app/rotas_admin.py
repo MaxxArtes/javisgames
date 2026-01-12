@@ -976,6 +976,20 @@ def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: s
     except Exception as e:
         print(f"Erro ao salvar: {e}")
         raise HTTPException(status_code=500, detail=f"Erro ao salvar: {str(e)}")
-
+        
+@router.get("/conteudo-didatico/cursos")
+def admin_listar_cursos_didaticos(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Esta consulta busca os cursos, seus módulos e as aulas vinculadas
+        # Certifique-se que as tabelas 'cursos', 'modulos' e 'aulas' existem com esses nomes
+        resp = supabase.table("cursos")\
+            .select("*, modulos(*, aulas(*))")\
+            .order("ordem")\
+            .execute()
+        return resp.data
+    except Exception as e:
+        print(f"Erro ao listar cursos didáticos: {e}")
+        return []
 
 
