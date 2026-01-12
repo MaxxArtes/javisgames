@@ -371,34 +371,47 @@ def get_cursos_permitidos(authorization: str = Header(None)):
 @router.get("/conteudo-aula")
 def get_conteudo_aula(titulo: str):
     try:
-        # Busca a aula pelo título (usando ilike para ser case-insensitive e mais flexível)
+        # Busca a aula pelo título
         res = supabase.table("aulas").select("*").ilike("titulo", f"%{titulo}%").execute()
         
         if not res.data:
-            # Se não achar pelo título exato, tenta uma busca mais simples ou retorna 404 amigável
             return {
                 "titulo": titulo,
-                "script": "Conteúdo ainda não disponível para esta aula específica no banco de dados.",
-                "codigo_exemplo": "Em breve o conteúdo será atualizado.",
+                "script": "Conteúdo em breve.",
+                "codigo_exemplo": "",
+                "desafio": "Aguarde o desafio desta aula.",
                 "caminho": ""
             }
             
         aula = res.data[0]
+        conteudo_raw = aula.get('conteudo') or ""
+        
+        # Lógica para separar Script, Código e Desafio
+        # Esperamos marcadores no banco como [SCRIPT], [CODIGO], [DESAFIO]
+        script = "Bem-vindos à aula!"
+        codigo = conteudo_raw
+        desafio = "Pratique o que aprendeu hoje."
+        
+        if "[SCRIPT]" in conteudo_raw and "[CODIGO]" in conteudo_raw:
+            parts = conteudo_raw.split("[CODIGO]")
+            script = parts[0].replace("[SCRIPT]", "").strip()
+            if "[DESAFIO]" in parts[1]:
+                sub_parts = parts[1].split("[DESAFIO]")
+                codigo = sub_parts[0].strip()
+                desafio = sub_parts[1].strip()
+            else:
+                codigo = parts[1].strip()
+        
         return {
             "titulo": aula['titulo'],
-            "script": "Conteúdo da aula carregado do banco de dados.",
-            "codigo_exemplo": aula.get('conteudo') or "Nenhum código disponível.",
+            "script": script,
+            "codigo_exemplo": codigo,
+            "desafio": desafio,
             "caminho": aula.get('caminho_arquivo', '')
         }
     except Exception as e:
         print(f"Erro conteudo aula: {e}")
-        # Retorna um objeto padrão em vez de 500 para não quebrar o frontend
-        return {
-            "titulo": titulo,
-            "script": "Erro ao carregar conteúdo.",
-            "codigo_exemplo": str(e),
-            "caminho": ""
-        }
+        return {"titulo": titulo, "script": "Erro", "codigo_exemplo": str(e), "desafio": "", "caminho": ""}
         
 # 4. CADASTRO DE ALUNO
 
