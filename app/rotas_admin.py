@@ -1199,3 +1199,62 @@ def get_mensagens_grupo(codigo_turma: str, authorization: str = Header(None)):
         res = supabase.table("tb_chat").select("*").eq("codigo_turma", codigo_turma).order("created_at").execute()
         return res.data
     except: return []
+
+
+# --- ROTAS DO GRUPO DA TURMA (RESTAURADAS) ---
+
+@router.get("/chat/turma/{codigo_turma}")
+def get_chat_turma(codigo_turma: str, authorization: str = Header(None)):
+    """Lê o histórico de mensagens do grupo da turma"""
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        msgs = supabase.table("tb_chat_turma")\
+            .select("*")\
+            .eq("codigo_turma", codigo_turma)\
+            .order("created_at", desc=False)\
+            .limit(100)\
+            .execute()
+        return msgs.data
+    except Exception as e:
+        print(f"Erro chat turma: {e}")
+        return []
+
+@router.post("/chat/turma/enviar")
+def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None)):
+    """Envia mensagem para o grupo identificando o remetente"""
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        
+        nome_exibicao = "Usuário"
+        cargo_exibicao = "Aluno"
+        
+        # 1. Verifica se quem envia é Staff (Professor ou Coord)
+        colab = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).maybe_single().execute()
+        
+        if colab.data:
+            c = colab.data
+            nome_exibicao = c['nome_completo'].split()[0]
+            if c['id_cargo'] == 6: cargo_exibicao = "Professor"
+            elif c['id_cargo'] == 4: cargo_exibicao = "Coordenação"
+            else: cargo_exibicao = "Staff"
+        else:
+            # 2. Se não for staff, busca o nome do Aluno
+            aluno = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).maybe_single().execute()
+            if aluno.data:
+                nome_exibicao = aluno.data['nome_completo'].split()[0]
+        
+        # 3. Insere na tabela tb_chat_turma
+        supabase.table("tb_chat_turma").insert({
+            "codigo_turma": dados.codigo_turma,
+            "mensagem": dados.mensagem,
+            "id_usuario_envio": user_id,
+            "nome_exibicao": nome_exibicao,
+            "cargo_exibicao": cargo_exibicao
+        }).execute()
+        
+        return {"message": "Sucesso"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
