@@ -8,6 +8,7 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta
 import requests
 import logging
+from datetime import datetime
 
 from app.modelos import (
     FuncionarioEdicaoData,
@@ -1097,5 +1098,26 @@ def admin_listar_cursos_didaticos(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro ao listar cursos didáticos: {e}")
         return []
+
+def calcular_progresso_automatico(data_inicio_str, total_aulas):
+    if not data_inicio_str:
+        return 0
+    
+    # Converte a data de início da turma (ex: "2023-10-01")
+    inicio = datetime.strptime(data_inicio_str, "%Y-%m-%d")
+    hoje = datetime.now()
+    
+    # Calcula a diferença de dias
+    dias_passados = (hoje - inicio).days
+    
+    # Calcula quantas aulas foram liberadas (1 a cada 7 dias)
+    aulas_liberadas = (dias_passados // 7) + 1
+    
+    # Garante que não ultrapasse o total de aulas do curso
+    aulas_liberadas = min(aulas_liberadas, total_aulas)
+    
+    # Retorna a porcentagem
+    return round((aulas_liberadas / total_aulas) * 100)
+
 
 
