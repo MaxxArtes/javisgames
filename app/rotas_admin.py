@@ -110,7 +110,7 @@ def get_contexto_usuario(token: str):
 
 # === ROTAS ADMINISTRATIVAS ===
 
-@router.get("/admin/listar-cargos")
+@router.get("/listar-cargos")
 def admin_listar_cargos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
@@ -148,7 +148,7 @@ def admin_listar_equipe(filtro_unidade: int | None = None, authorization: str = 
         return []
         
 
-@router.post("/admin/cadastrar-funcionario")
+@router.post("/cadastrar-funcionario")
 def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -182,7 +182,7 @@ def admin_cadastrar_funcionario(dados: NovoFuncionarioData, authorization: str =
         raise HTTPException(status_code=400, detail="Erro ao criar funcionário.")
 
 
-@router.put("/admin/editar-funcionario/{id_colaborador}")
+@router.put("/editar-funcionario/{id_colaborador}")
 def admin_editar_funcionario(id_colaborador: int, dados: FuncionarioEdicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -209,7 +209,7 @@ def admin_editar_funcionario(id_colaborador: int, dados: FuncionarioEdicaoData, 
 
 # 2. GESTÃO DE TURMAS
 
-@router.get("/admin/gerenciar-turmas")
+@router.get("/gerenciar-turmas")
 def admin_listar_turmas_completo(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -225,7 +225,7 @@ def admin_listar_turmas_completo(authorization: str = Header(None)):
         return []
 
 
-@router.post("/admin/salvar-turma")
+@router.post("/salvar-turma")
 def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -253,7 +253,7 @@ def admin_salvar_turma(dados: TurmaData, authorization: str = Header(None)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/admin/editar-turma/{codigo_original}")
+@router.put("/editar-turma/{codigo_original}")
 def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
@@ -309,7 +309,7 @@ def get_dados_funcionario(authorization: str = Header(None)):
         
 # 4. CADASTRO DE ALUNO
 
-@router.post("/admin/cadastrar-aluno")
+@router.post("/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -349,7 +349,7 @@ def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/admin/listar-alunos")
+@router.get("/listar-alunos")
 def admin_listar_alunos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -365,7 +365,7 @@ def admin_listar_alunos(authorization: str = Header(None)):
 
 # 5. REPOSIÇÕES E AGENDA
 
-@router.delete("/admin/reposicao/{id_repo}")
+@router.delete("/reposicao/{id_repo}")
 def deletar_reposicao(id_repo: str, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
@@ -385,7 +385,7 @@ def deletar_reposicao(id_repo: str, authorization: str = Header(None)):
         
     return False
 
-@router.post("/admin/agendar-reposicao")
+@router.post("/agendar-reposicao")
 def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
@@ -431,7 +431,7 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
     except Exception as e: raise HTTPException(status_code=400, detail="Erro interno.")
         
 
-@router.get("/admin/agenda-geral")
+@router.get("/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -518,7 +518,7 @@ def admin_agenda(authorization: str = Header(None)):
         return []
 
 
-@router.put("/admin/reposicao-completa/{id_repo}")
+@router.put("/reposicao-completa/{id_repo}")
 def atualizar_reposicao_completa(id_repo: str, presenca: str = Form(...), observacoes: str = Form(None), arquivo: UploadFile = File(None), authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
@@ -539,7 +539,7 @@ def atualizar_reposicao_completa(id_repo: str, presenca: str = Form(...), observ
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/admin/editar-reposicao/{id_repo}")
+@router.patch("/editar-reposicao/{id_repo}")
 def atualizar_dados_reposicao(id_repo: str, dados: ReposicaoEdicaoData, authorization: str = Header(None)):
     # CORREÇÃO: Usamos ReposicaoEdicaoData para não exigir todos os campos (aluno, prof, etc)
     if not authorization: raise HTTPException(status_code=401)
@@ -566,7 +566,7 @@ def atualizar_dados_reposicao(id_repo: str, dados: ReposicaoEdicaoData, authoriz
         raise HTTPException(status_code=400, detail=str(e))
         
 
-@router.patch("/admin/reposicao/{id_repo}")
+@router.patch("/reposicao/{id_repo}")
 def atualizar_reposicao_status(id_repo: str, dados: ReposicaoUpdate, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -583,7 +583,7 @@ def atualizar_reposicao_status(id_repo: str, dados: ReposicaoUpdate, authorizati
 
 # 6. CRM / LEADS
 
-@router.get("/admin/leads-crm")
+@router.get("/leads-crm")
 def get_leads_crm(filtro_unidade: int | None = None, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -631,7 +631,7 @@ def get_leads_crm(filtro_unidade: int | None = None, authorization: str = Header
         return []
 
 
-@router.patch("/admin/leads-crm/{id_inscricao}")
+@router.patch("/leads-crm/{id_inscricao}")
 def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -645,7 +645,7 @@ def atualizar_status_lead(id_inscricao: int, dados: StatusUpdateData, authorizat
     except: raise HTTPException(status_code=500)
 
 
-@router.patch("/admin/meus-dados")
+@router.patch("/meus-dados")
 def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
@@ -665,7 +665,7 @@ def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(No
     except: raise HTTPException(status_code=500)
 
 
-@router.get("/admin/listar-turmas")
+@router.get("/listar-turmas")
 def admin_listar_turmas(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -677,7 +677,7 @@ def admin_listar_turmas(authorization: str = Header(None)):
     except: return []
 
 
-@router.get("/admin/listar-professores")
+@router.get("/listar-professores")
 def admin_listar_professores(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -689,7 +689,7 @@ def admin_listar_professores(authorization: str = Header(None)):
     except: return []
 
 
-@router.get("/admin/chat/conversas-ativas")
+@router.get("/chat/conversas-ativas")
 def admin_listar_conversas_ativas(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401, detail="Token ausente")
     try:
@@ -740,13 +740,13 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
         return []
 
 
-@router.get("/admin/chat/mensagens/{id_aluno}")
+@router.get("/chat/mensagens/{id_aluno}")
 def admin_ler_mensagens(id_aluno: int):
     msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
     return msgs.data
 
 
-@router.post("/admin/chat/responder")
+@router.post("/chat/responder")
 def admin_responder(dados: ChatAdminReply, authorization: str = Header(None)):
     if not authorization: 
         raise HTTPException(status_code=401, detail="Token ausente")
@@ -778,7 +778,7 @@ def admin_responder(dados: ChatAdminReply, authorization: str = Header(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/admin/dashboard-stats")
+@router.get("/dashboard-stats")
 def get_dashboard_stats(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -835,7 +835,7 @@ class MensagemDiretaData(BaseModel):
     mensagem: str
 
 
-@router.get("/admin/chat/historico-unificado")
+@router.get("/chat/historico-unificado")
 def get_historico_unificado(authorization: str = Header(None)):
     """
     Retorna uma lista unificada de conversas recentes (Alunos e Grupos),
@@ -905,7 +905,7 @@ def get_historico_unificado(authorization: str = Header(None)):
 
 
 
-@router.get("/admin/aula/{id_aula}/conteudo")
+@router.get("/aula/{id_aula}/conteudo")
 def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
@@ -944,7 +944,7 @@ def get_aula_conteudo(id_aula: int, authorization: str = Header(None)):
         return {"html": "", "tipo": "erro"}
 
 
-@router.put("/admin/aula/{id_aula}/salvar")
+@router.put("/aula/{id_aula}/salvar")
 def salvar_aula_conteudo(id_aula: int, dados: AulaConteudoData, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     
