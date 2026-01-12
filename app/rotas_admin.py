@@ -1190,3 +1190,12 @@ def enviar_mensagem_aluno(dados: dict, authorization: str = Header(None)):
         }).execute()
         return {"status": "ok"}
     except: raise HTTPException(status_code=400)
+
+@router.get("/chat/mensagens-grupo/{codigo_turma}")
+def get_mensagens_grupo(codigo_turma: str, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Busca mensagens onde o codigo_turma coincide
+        res = supabase.table("tb_chat").select("*").eq("codigo_turma", codigo_turma).order("created_at").execute()
+        return res.data
+    except: return []
