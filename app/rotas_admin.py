@@ -306,6 +306,88 @@ def get_dados_funcionario(authorization: str = Header(None)):
         }
     except Exception as e:
         raise HTTPException(status_code=403, detail="Erro interno")
+
+@router.get("/conteudo-didatico/cursos")
+def get_conteudo_didatico(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # 1. Buscar Cursos
+        cursos_resp = supabase.table("cursos").select("*").eq("ativo", True).order("ordem").execute()
+        cursos = cursos_resp.data
+        
+        # 2. Para cada curso, buscar módulos e aulas
+        for curso in cursos:
+            modulos_resp = supabase.table("modulos").select("*").eq("curso_id", curso['id']).order("ordem").execute()
+            modulos = modulos_resp.data
+            
+            for modulo in modulos:
+                aulas_resp = supabase.table("aulas").select("*").eq("modulo_id", modulo['id']).order("ordem").execute()
+                modulo['aulas'] = aulas_resp.data
+            
+            curso['modulos'] = modulos
+            
+        return cursos
+    except Exception as e:
+        print(f"Erro ao buscar conteúdo didático: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao carregar conteúdo didático")
+
+@router.get("/meus-cursos-permitidos")
+def get_cursos_permitidos(authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
+        
+        # 1. Buscar o aluno pelo user_id
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno").eq("user_id", user_id).execute()
+        if not aluno_resp.data:
+            # Se não encontrar aluno, retorna uma lista vazia ou padrão para teste
+            return {"cursos": []}
+            
+        # 2. Por enquanto, como a tabela tb_matriculas está vazia, 
+        # vamos retornar todos os cursos ativos como permitidos para não bloquear o aluno.
+        # No futuro, aqui deve ser feita a filtragem por matrícula real.
+        cursos_resp = supabase.table("cursos").select("id, titulo").eq("ativo", True).execute()
+        
+        # Mapear para o formato que o frontend espera (slugs)
+        mapa_slugs = {
+            "GAME PRO": "game-pro",
+            "DESIGNER START": "designer-start",
+            "GAME DEV": "game-dev",
+            "STREAMING": "streaming"
+        }
+        
+        cursos_permitidos = []
+        for c in cursos_resp.data:
+            slug = mapa_slugs.get(c['titulo'].upper(), c['titulo'].lower().replace(" ", "-"))
+            cursos_permitidos.append({"id": slug, "data_inicio": "2024-01-01"})
+            
+        return {"cursos": cursos_permitidos}
+    except Exception as e:
+        print(f"Erro cursos permitidos: {e}")
+        return {"cursos": []}
+
+@router.get("/conteudo-aula")
+def get_conteudo_aula(titulo: str):
+    try:
+        # Busca a aula pelo título
+        res = supabase.table("aulas").select("*").eq("titulo", titulo).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Aula não encontrada")
+            
+        aula = res.data[0]
+        # O frontend espera campos como 'script' e 'codigo_exemplo'
+        # Vamos mapear o 'conteudo' (HTML) para o que for necessário ou retornar o objeto
+        return {
+            "titulo": aula['titulo'],
+            "script": "Conteúdo da aula carregado do banco de dados.",
+            "codigo_exemplo": aula.get('conteudo', 'Nenhum código disponível.'),
+            "caminho": aula.get('caminho_arquivo', '')
+        }
+    except Exception as e:
+        print(f"Erro conteudo aula: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno")
         
 # 4. CADASTRO DE ALUNO
 
