@@ -118,7 +118,7 @@ def admin_listar_cargos(authorization: str = Header(None)):
     except: return []
 
 
-@router.get("/admin/listar-equipe")
+@router.get("/listar-equipe")
 def admin_listar_equipe(filtro_unidade: int | None = None, authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     token = authorization.split(" ")[1]
@@ -277,7 +277,7 @@ def admin_editar_turma(codigo_original: str, dados: TurmaData, authorization: st
 
 # 3. DADOS DO FUNCIONÁRIO
 
-@router.get("/admin/meus-dados")
+@router.get("/meus-dados")
 def get_dados_funcionario(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
