@@ -1119,5 +1119,66 @@ def calcular_progresso_automatico(data_inicio_str, total_aulas):
     # Retorna a porcentagem
     return round((aulas_liberadas / total_aulas) * 100)
 
+@router.get("/aluno/meus-contatos")
+def get_contatos_aluno(authorization: str = Header(None)):
+    if not authorization: 
+        raise HTTPException(status_code=401)
+    
+    try:
+        token = authorization.split(" ")[1]
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
 
+        # 1. Busca o ID do aluno e a turma dele
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno, tb_matriculas(codigo_turma)").eq("user_id", user_id).single().execute()
+        if not aluno_resp.data:
+            return []
+        
+        id_aluno = aluno_resp.data['id_aluno']
+        # Pega o primeiro código de turma da lista de matrículas
+        matriculas = aluno_resp.data.get('tb_matriculas', [])
+        codigo_turma = matriculas[0]['codigo_turma'] if matriculas else None
+
+        contatos = []
+
+        # 2. Busca o Professor da Turma para chat Privado e Grupo
+        if codigo_turma:
+            turma_resp = supabase.table("tb_turmas").select("codigo_turma, nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", codigo_turma).single().execute()
+            
+            if turma_resp.data:
+                turma = turma_resp.data
+                prof = turma.get('tb_colaboradores')
+                
+                # Card do Grupo da Turma
+                contatos.append({
+                    "id": f"grupo-{codigo_turma}",
+                    "nome": f"Grupo {turma['nome_curso']}",
+                    "cargo": turma['nome_curso'],
+                    "tipo": "Professor",
+                    "codigo_turma_grupo": codigo_turma
+                })
+
+                # Card do Professor (Privado)
+                if prof:
+                    contatos.append({
+                        "id": turma['id_professor'],
+                        "nome": prof['nome_completo'],
+                        "cargo": f"Prof. {turma['nome_curso']}",
+                        "tipo": "Professor",
+                        "codigo_turma_grupo": None
+                    })
+
+        # 3. Card da Secretaria/Suporte Geral (Sempre aparece)
+        contatos.append({
+            "id": "geral",
+            "nome": "Suporte Javis",
+            "cargo": "Secretaria / Coordenação",
+            "tipo": "Admin",
+            "codigo_turma_grupo": None
+        })
+
+        return contatos
+    except Exception as e:
+        print(f"Erro ao buscar contatos: {e}")
+        return []
 
