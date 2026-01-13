@@ -1134,7 +1134,6 @@ def calcular_progresso_automatico(data_inicio_str, total_aulas):
     # Retorna a porcentagem
     return round((aulas_liberadas / total_aulas) * 100)
 
-# Rota para o aluno buscar os contatos (Professores e Secretaria)
 @router.get("/aluno/meus-contatos")
 def get_contatos_aluno(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
@@ -1143,27 +1142,45 @@ def get_contatos_aluno(authorization: str = Header(None)):
         user = supabase.auth.get_user(token)
         user_id = user.user.id
 
-        # Busca o ID do aluno e a matrícula dele
-        aluno = supabase.table("tb_alunos").select("id_aluno, tb_matriculas(codigo_turma)").eq("user_id", user_id).single().execute()
-        if not aluno.data: return []
+        # 1. Busca Aluno e Unidade
+        aluno_resp = supabase.table("tb_alunos").select("id_aluno, id_unidade").eq("user_id", user_id).single().execute()
+        if not aluno_resp.data: return []
         
-        matriculas = aluno.data.get('tb_matriculas', [])
-        codigo_turma = matriculas[0]['codigo_turma'] if matriculas else None
+        aluno = aluno_resp.data
+        id_unidade = aluno['id_unidade']
+
         contatos = []
 
-        if codigo_turma:
-            turma = supabase.table("tb_turmas").select("nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", codigo_turma).single().execute()
-            if turma.data:
-                # Card do Professor
+        # 2. Busca Matrícula e Turma para o GRUPO
+        matricula = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", aluno['id_aluno']).execute()
+        if matricula.data:
+            cod_turma = matricula.data[0]['codigo_turma']
+            turma_info = supabase.table("tb_turmas").select("nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", cod_turma).single().execute()
+            
+            if turma_info.data:
+                t = turma_info.data
+                # ADICIONA O CARD DO GRUPO (O que estava a faltar)
                 contatos.append({
-                    "id": turma.data['id_professor'],
-                    "nome": turma.data['tb_colaboradores']['nome_completo'],
-                    "cargo": f"Prof. {turma.data['nome_curso']}",
-                    "tipo": "Professor"
+                    "id": f"grupo-{cod_turma}",
+                    "nome": f"Grupo {t['nome_curso']}",
+                    "cargo": f"Turma {cod_turma}",
+                    "tipo": "Professor",
+                    "codigo_turma_grupo": cod_turma # CAMPO ESSENCIAL
                 })
+
+                # Adiciona o Professor (Privado)
+                if t.get('tb_colaboradores'):
+                    contatos.append({
+                        "id": t['id_professor'],
+                        "nome": t['tb_colaboradores']['nome_completo'],
+                        "cargo": f"Prof. {t['nome_curso']}",
+                        "tipo": "Professor",
+                        "codigo_turma_grupo": None
+                    })
+
+        # 3. Suporte Geral (Secretaria)
+        contatos.append({"id": "geral", "nome": "Suporte Javis", "cargo": "Secretaria", "tipo": "Admin", "codigo_turma_grupo": None})
         
-        # Suporte Geral sempre disponível
-        contatos.append({"id": "geral", "nome": "Suporte Javis", "cargo": "Secretaria", "tipo": "Admin"})
         return contatos
     except: return []
 
