@@ -22,10 +22,9 @@ from app.modelos import (
     StatusUpdateData,
     NovoFuncionarioData,
     AulaConteudoData,
-    MensagemGrupoData,  # <--- ADICIONE ESTA LINHA
-    MensagemDiretaData  # Certifique-se que este também está aqui se for usado
+    MensagemDiretaData, # <--- Verifique se está aqui
+    MensagemGrupoData   # <--- Verifique se está aqui
 )
-
 from app.modelos import (
     FuncionarioEdicaoData,
     PerfilUpdateData,
