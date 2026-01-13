@@ -3,6 +3,11 @@ Modelos Pydantic para validação de dados
 """
 from pydantic import BaseModel
 
+
+class MensagemDiretaData(BaseModel):
+    id_colaborador: int | None = None # Se for None, é suporte geral
+    mensagem: str
+
 class MensagemGrupoData(BaseModel):
     codigo_turma: str
     mensagem: str
