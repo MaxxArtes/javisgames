@@ -324,28 +324,27 @@ def get_dados_funcionario(authorization: str = Header(None)):
         raise HTTPException(status_code=403, detail="Erro interno")
 
 @router.get("/conteudo-didatico/cursos")
-def get_conteudo_didatico(authorization: str = Header(None)):
+def admin_listar_cursos_didaticos(authorization: str = Header(None)):
     if not authorization: raise HTTPException(status_code=401)
     try:
-        # 1. Buscar Cursos
-        cursos_resp = supabase.table("cursos").select("*").eq("ativo", True).order("ordem").execute()
-        cursos = cursos_resp.data
-        
-        # 2. Para cada curso, buscar módulos e aulas
-        for curso in cursos:
-            modulos_resp = supabase.table("modulos").select("*").eq("curso_id", curso['id']).order("ordem").execute()
-            modulos = modulos_resp.data
+        # Busca cursos com módulos e aulas aninhados usando a sintaxe do PostgREST (Supabase)
+        resp = supabase.table("cursos")\
+            .select("*, modulos(*, aulas(*))")\
+            .order("ordem")\
+            .execute()
             
-            for modulo in modulos:
-                aulas_resp = supabase.table("aulas").select("*").eq("modulo_id", modulo['id']).order("ordem").execute()
-                modulo['aulas'] = aulas_resp.data
+        if not resp.data:
+            return []
             
-            curso['modulos'] = modulos
-            
-        return cursos
+        # Garante que a ordenação das aulas dentro dos módulos seja respeitada
+        for curso in resp.data:
+            for modulo in curso.get('modulos', []):
+                modulo['aulas'] = sorted(modulo.get('aulas', []), key=lambda x: x.get('ordem', 0))
+                
+        return resp.data
     except Exception as e:
-        print(f"Erro ao buscar conteúdo didático: {e}")
-        raise HTTPException(status_code=500, detail="Erro ao carregar conteúdo didático")
+        print(f"Erro ao listar cursos didáticos: {e}")
+        return []
 
 @router.get("/meus-cursos-permitidos")
 def get_cursos_permitidos(authorization: str = Header(None)):
