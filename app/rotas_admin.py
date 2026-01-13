@@ -386,47 +386,46 @@ def get_cursos_permitidos(authorization: str = Header(None)):
 @router.get("/conteudo-aula")
 def get_conteudo_aula(titulo: str):
     try:
-        # Busca a aula pelo título
+        # Busca a aula pelo título exato ou aproximado na tabela 'aulas'
+        # Usamos .ilike para ignorar diferenças entre maiúsculas/minúsculas
         res = supabase.table("aulas").select("*").ilike("titulo", f"%{titulo}%").execute()
         
         if not res.data:
             return {
                 "titulo": titulo,
                 "script": "Conteúdo em breve.",
-                "codigo_exemplo": "",
-                "desafio": "Aguarde o desafio desta aula.",
-                "caminho": ""
+                "codigo_exemplo": "# O código será adicionado em breve.",
+                "desafio": "Aguarde o desafio desta aula."
             }
             
         aula = res.data[0]
         conteudo_raw = aula.get('conteudo') or ""
         
-        # Lógica para separar Script, Código e Desafio
-        # Esperamos marcadores no banco como [SCRIPT], [CODIGO], [DESAFIO]
-        script = "Bem-vindos à aula!"
-        codigo = conteudo_raw
-        desafio = "Pratique o que aprendeu hoje."
-        
-        if "[SCRIPT]" in conteudo_raw and "[CODIGO]" in conteudo_raw:
+        # Lógica de extração das tags [SCRIPT], [CODIGO], [DESAFIO]
+        script = "Bem-vindos!"
+        codigo = ""
+        desafio = "Pratique o que aprendeu."
+
+        if "[SCRIPT]" in conteudo_raw:
             parts = conteudo_raw.split("[CODIGO]")
             script = parts[0].replace("[SCRIPT]", "").strip()
-            if "[DESAFIO]" in parts[1]:
-                sub_parts = parts[1].split("[DESAFIO]")
-                codigo = sub_parts[0].strip()
-                desafio = sub_parts[1].strip()
-            else:
-                codigo = parts[1].strip()
+            if len(parts) > 1:
+                if "[DESAFIO]" in parts[1]:
+                    sub_parts = parts[1].split("[DESAFIO]")
+                    codigo = sub_parts[0].strip()
+                    desafio = sub_parts[1].strip()
+                else:
+                    codigo = parts[1].strip()
         
         return {
             "titulo": aula['titulo'],
             "script": script,
             "codigo_exemplo": codigo,
-            "desafio": desafio,
-            "caminho": aula.get('caminho_arquivo', '')
+            "desafio": desafio
         }
     except Exception as e:
-        print(f"Erro conteudo aula: {e}")
-        return {"titulo": titulo, "script": "Erro", "codigo_exemplo": str(e), "desafio": "", "caminho": ""}
+        print(f"Erro ao buscar conteúdo: {e}")
+        return {"titulo": titulo, "script": "Erro ao carregar conteúdo."}
         
 # 4. CADASTRO DE ALUNO
 
