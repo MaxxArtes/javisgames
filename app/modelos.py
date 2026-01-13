@@ -3,11 +3,6 @@ Modelos Pydantic para validação de dados
 """
 from pydantic import BaseModel
 
-
-class MensagemGrupoData(BaseModel):
-    codigo_turma: str
-    mensagem: str
-
 class MensagemGrupoData(BaseModel):
     codigo_turma: str
     mensagem: str
