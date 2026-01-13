@@ -8,6 +8,10 @@ class MensagemGrupoData(BaseModel):
     codigo_turma: str
     mensagem: str
 
+class MensagemGrupoData(BaseModel):
+    codigo_turma: str
+    mensagem: str
+
 class FuncionarioEdicaoData(BaseModel):
     nome: str | None = None
     telefone: str | None = None
