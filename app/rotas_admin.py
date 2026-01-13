@@ -1272,23 +1272,22 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         nome_exibicao = "Usuário"
         cargo_exibicao = "Aluno"
         
-        # 1. Tenta buscar como Colaborador (Professor/Staff)
-        try:
-            colab_resp = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).execute()
-            if colab_resp.data:
-                c = colab_resp.data[0]
-                nome_exibicao = c['nome_completo'].split()[0]
-                cargo_exibicao = "Professor" if c['id_cargo'] == 6 else "Staff"
-            else:
-                # 2. Se não achou na colab, busca na tabela de alunos
-                aluno_resp = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).execute()
-                if aluno_resp.data:
-                    nome_exibicao = aluno_resp.data[0]['nome_completo'].split()[0]
-                    cargo_exibicao = "Aluno"
-        except Exception as e:
-            print(f"Erro ao identificar remetente: {e}")
+        # 1. Tenta buscar como Colaborador de forma segura
+        colab_resp = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).execute()
+        
+        # Verificação robusta: se o objeto de resposta existe e tem dados
+        if colab_resp and hasattr(colab_resp, 'data') and colab_resp.data:
+            c = colab_resp.data[0]
+            nome_exibicao = c['nome_completo'].split()[0]
+            cargo_exibicao = "Professor" if c['id_cargo'] == 6 else "Staff"
+        else:
+            # 2. Se não é colaborador, busca na tabela de alunos
+            aluno_resp = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).execute()
+            if aluno_resp and hasattr(aluno_resp, 'data') and aluno_resp.data:
+                nome_exibicao = aluno_resp.data[0]['nome_completo'].split()[0]
+                cargo_exibicao = "Aluno"
 
-        # 3. Inserção na tabela de chat da turma
+        # 3. Inserção na tabela
         supabase.table("tb_chat_turma").insert({
             "codigo_turma": dados.codigo_turma,
             "mensagem": dados.mensagem,
@@ -1299,5 +1298,5 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
         
         return {"message": "OK"}
     except Exception as e:
-        print(f"Erro fatal no envio de grupo: {e}")
+        print(f"Erro ao enviar no grupo: {e}")
         raise HTTPException(status_code=500, detail="Erro interno no servidor.")
