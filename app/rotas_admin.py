@@ -9,6 +9,22 @@ from datetime import datetime, timedelta
 import requests
 import logging
 from datetime import datetime
+from app.modelos import (
+    FuncionarioEdicaoData,
+    PerfilUpdateData,
+    ReposicaoEdicaoData,
+    ReposicaoUpdate,
+    TurmaData,
+    NovoAlunoData,
+    AlunoEdicaoData,
+    ReposicaoData,
+    ChatAdminReply,
+    StatusUpdateData,
+    NovoFuncionarioData,
+    AulaConteudoData,
+    MensagemGrupoData,  # <--- ADICIONE ESTA LINHA
+    MensagemDiretaData  # Certifique-se que este também está aqui se for usado
+)
 
 from app.modelos import (
     FuncionarioEdicaoData,
