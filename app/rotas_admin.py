@@ -1146,29 +1146,38 @@ def get_contatos_aluno(authorization: str = Header(None)):
         aluno_resp = supabase.table("tb_alunos").select("id_aluno, id_unidade").eq("user_id", user_id).single().execute()
         if not aluno_resp.data: return []
         
-        aluno = aluno_resp.data
-        id_unidade = aluno['id_unidade']
-
+        id_unidade = aluno_resp.data['id_unidade']
+        id_aluno = aluno_resp.data['id_aluno']
         contatos = []
 
-        # 2. Busca Matrícula e Turma para o GRUPO
-        matricula = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", aluno['id_aluno']).execute()
+        # --- PARTE A: COORDENADOR (ID Cargo 4) ---
+        coords = supabase.table("tb_colaboradores").select("id_colaborador, nome_completo").eq("id_unidade", id_unidade).eq("id_cargo", 4).eq("ativo", True).execute()
+        for c in coords.data:
+            contatos.append({
+                "id": c['id_colaborador'],
+                "nome": c['nome_completo'],
+                "cargo": "Coordenador Pedagógico",
+                "tipo": "Coordenacao",
+                "codigo_turma_grupo": None
+            })
+
+        # --- PARTE B: GRUPO E PROFESSOR ---
+        matricula = supabase.table("tb_matriculas").select("codigo_turma").eq("id_aluno", id_aluno).execute()
         if matricula.data:
             cod_turma = matricula.data[0]['codigo_turma']
             turma_info = supabase.table("tb_turmas").select("nome_curso, id_professor, tb_colaboradores(nome_completo)").eq("codigo_turma", cod_turma).single().execute()
             
             if turma_info.data:
                 t = turma_info.data
-                # ADICIONA O CARD DO GRUPO (O que estava a faltar)
+                # Card do Grupo
                 contatos.append({
                     "id": f"grupo-{cod_turma}",
                     "nome": f"Grupo {t['nome_curso']}",
                     "cargo": f"Turma {cod_turma}",
-                    "tipo": "Professor",
-                    "codigo_turma_grupo": cod_turma # CAMPO ESSENCIAL
+                    "tipo": "Grupo",
+                    "codigo_turma_grupo": cod_turma
                 })
-
-                # Adiciona o Professor (Privado)
+                # Card do Professor
                 if t.get('tb_colaboradores'):
                     contatos.append({
                         "id": t['id_professor'],
@@ -1178,11 +1187,12 @@ def get_contatos_aluno(authorization: str = Header(None)):
                         "codigo_turma_grupo": None
                     })
 
-        # 3. Suporte Geral (Secretaria)
+        # Suporte Geral
         contatos.append({"id": "geral", "nome": "Suporte Javis", "cargo": "Secretaria", "tipo": "Admin", "codigo_turma_grupo": None})
-        
         return contatos
-    except: return []
+    except Exception as e:
+        print(f"Erro contatos: {e}")
+        return []
 
 # Rota para buscar o histórico de mensagens com um contato específico
 @router.get("/chat/mensagens-com/{target}")
@@ -1253,40 +1263,33 @@ def get_chat_turma(codigo_turma: str, authorization: str = Header(None)):
 
 @router.post("/chat/turma/enviar")
 def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None)):
-    """Envia mensagem para o grupo identificando o remetente"""
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
-        user = supabase.auth.get_user(token)
-        user_id = user.user.id
+        user_id = supabase.auth.get_user(token).user.id
         
-        nome_exibicao = "Usuário"
-        cargo_exibicao = "Aluno"
+        # Tenta identificar o remetente (pode ser aluno ou staff)
+        nome = "Usuário"
+        cargo = "Aluno"
         
-        # 1. Verifica se quem envia é Staff (Professor ou Coord)
         colab = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).maybe_single().execute()
-        
         if colab.data:
-            c = colab.data
-            nome_exibicao = c['nome_completo'].split()[0]
-            if c['id_cargo'] == 6: cargo_exibicao = "Professor"
-            elif c['id_cargo'] == 4: cargo_exibicao = "Coordenação"
-            else: cargo_exibicao = "Staff"
+            nome = colab.data['nome_completo'].split()[0]
+            cargo = "Professor" if colab.data['id_cargo'] == 6 else "Staff"
         else:
-            # 2. Se não for staff, busca o nome do Aluno
             aluno = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).maybe_single().execute()
-            if aluno.data:
-                nome_exibicao = aluno.data['nome_completo'].split()[0]
-        
-        # 3. Insere na tabela tb_chat_turma
-        supabase.table("tb_chat_turma").insert({
+            if aluno.data: nome = aluno.data['nome_completo'].split()[0]
+
+        # Inserção na tabela de grupo
+        res = supabase.table("tb_chat_turma").insert({
             "codigo_turma": dados.codigo_turma,
             "mensagem": dados.mensagem,
             "id_usuario_envio": user_id,
-            "nome_exibicao": nome_exibicao,
-            "cargo_exibicao": cargo_exibicao
+            "nome_exibicao": nome,
+            "cargo_exibicao": cargo
         }).execute()
         
-        return {"message": "Sucesso"}
+        return {"message": "OK"}
     except Exception as e:
+        print(f"Erro ao enviar no grupo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
