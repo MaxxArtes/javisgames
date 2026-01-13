@@ -1266,30 +1266,38 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
     if not authorization: raise HTTPException(status_code=401)
     try:
         token = authorization.split(" ")[1]
-        user_id = supabase.auth.get_user(token).user.id
+        user = supabase.auth.get_user(token)
+        user_id = user.user.id
         
-        # Tenta identificar o remetente (pode ser aluno ou staff)
-        nome = "Usuário"
-        cargo = "Aluno"
+        nome_exibicao = "Usuário"
+        cargo_exibicao = "Aluno"
         
-        colab = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).maybe_single().execute()
-        if colab.data:
-            nome = colab.data['nome_completo'].split()[0]
-            cargo = "Professor" if colab.data['id_cargo'] == 6 else "Staff"
-        else:
-            aluno = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).maybe_single().execute()
-            if aluno.data: nome = aluno.data['nome_completo'].split()[0]
+        # 1. Tenta buscar como Colaborador (Professor/Staff)
+        try:
+            colab_resp = supabase.table("tb_colaboradores").select("nome_completo, id_cargo").eq("user_id", user_id).execute()
+            if colab_resp.data:
+                c = colab_resp.data[0]
+                nome_exibicao = c['nome_completo'].split()[0]
+                cargo_exibicao = "Professor" if c['id_cargo'] == 6 else "Staff"
+            else:
+                # 2. Se não achou na colab, busca na tabela de alunos
+                aluno_resp = supabase.table("tb_alunos").select("nome_completo").eq("user_id", user_id).execute()
+                if aluno_resp.data:
+                    nome_exibicao = aluno_resp.data[0]['nome_completo'].split()[0]
+                    cargo_exibicao = "Aluno"
+        except Exception as e:
+            print(f"Erro ao identificar remetente: {e}")
 
-        # Inserção na tabela de grupo
-        res = supabase.table("tb_chat_turma").insert({
+        # 3. Inserção na tabela de chat da turma
+        supabase.table("tb_chat_turma").insert({
             "codigo_turma": dados.codigo_turma,
             "mensagem": dados.mensagem,
             "id_usuario_envio": user_id,
-            "nome_exibicao": nome,
-            "cargo_exibicao": cargo
+            "nome_exibicao": nome_exibicao,
+            "cargo_exibicao": cargo_exibicao
         }).execute()
         
         return {"message": "OK"}
     except Exception as e:
-        print(f"Erro ao enviar no grupo: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Erro fatal no envio de grupo: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno no servidor.")
