@@ -1298,3 +1298,39 @@ def enviar_chat_turma(dados: MensagemGrupoData, authorization: str = Header(None
     except Exception as e:
         print(f"Erro ao enviar no grupo: {e}")
         raise HTTPException(status_code=500, detail="Erro interno no servidor.")
+
+
+@router.get("/aula/{aula_id}")
+def get_aula_por_id(aula_id: int, authorization: str = Header(None)):
+    """Retorna os dados completos de uma aula específica pelo ID"""
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        res = supabase.table("aulas").select("*").eq("id", aula_id).single().execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Aula não encontrada")
+        return res.data
+    except Exception as e:
+        print(f"Erro ao buscar aula {aula_id}: {e}")
+        raise HTTPException(status_code=500)
+
+@router.get("/conteudo-didatico/cursos")
+def admin_listar_cursos_didaticos(authorization: str = Header(None)):
+    """Busca a árvore completa: Cursos -> Módulos -> Aulas"""
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # A consulta abaixo traz a hierarquia completa ordenada
+        resp = supabase.table("cursos")\
+            .select("*, modulos(*, aulas(*))")\
+            .order("ordem")\
+            .execute()
+        
+        # Ordenação manual das sub-listas para garantir a sequência pedagógica
+        for curso in resp.data:
+            curso['modulos'] = sorted(curso.get('modulos', []), key=lambda x: x.get('ordem', 0))
+            for modulo in curso['modulos']:
+                modulo['aulas'] = sorted(modulo.get('aulas', []), key=lambda x: x.get('ordem', 0))
+                
+        return resp.data
+    except Exception as e:
+        print(f"Erro ao carregar estrutura: {e}")
+        return []
