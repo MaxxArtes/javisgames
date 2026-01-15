@@ -4,9 +4,10 @@ Modelos Pydantic para validação de dados
 from pydantic import BaseModel
 
 class NovoUsuarioData(BaseModel):
-    id_aluno: int    # ID do aluno já existente em tb_alunos
-    email: str       # E-mail de login
-    senha: str       # Senha inicial
+    id_aluno: int
+    email: str
+    senha: str
+
 
 class MensagemDiretaData(BaseModel):
     id_colaborador: int | None = None # Se for None, é suporte geral
