@@ -37,8 +37,14 @@ from app.modelos import (
     ChatAdminReply,
     StatusUpdateData,
     NovoFuncionarioData,
-    AulaConteudoData
+    AulaConteudoData,
+    LoginData,
+    NovoAlunoData,
+    TurmaData,
+    NovoUsuarioData
+
 )
+
 
 # Logger
 logger = logging.getLogger(__name__)
