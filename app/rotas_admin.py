@@ -1334,3 +1334,41 @@ def admin_listar_cursos_didaticos(authorization: str = Header(None)):
     except Exception as e:
         print(f"Erro ao carregar estrutura: {e}")
         return []
+@router.post("/criar-login-aluno")
+def criar_login_aluno(dados: NovoUsuarioData, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # Valida permissões (mesma lógica de admin_listar_alunos ou cadastrar-aluno)
+    if ctx['nivel'] < 8:  # ajuste conforme sua lógica de permissão
+        raise HTTPException(status_code=403, detail="Acesso restrito.")
+
+    # Verifica se o aluno existe
+    aluno = supabase.table("tb_alunos").select("user_id").eq("id_aluno", dados.id_aluno).single().execute()
+    if not aluno.data:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado.")
+    if aluno.data.get("user_id"):
+        raise HTTPException(status_code=400, detail="Aluno já possui login.")
+
+    # Cria o usuário no Supabase Auth
+    try:
+        user_auth = supabase.auth.admin.create_user({
+            "email": dados.email,
+            "password": dados.senha,
+            "email_confirm": True
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao criar usuário: {str(e)}")
+
+    new_user_id = user_auth.user.id
+
+    # Atualiza a tabela tb_alunos com user_id e e-mail
+    supabase.table("tb_alunos").update({
+        "email": dados.email,
+        "user_id": new_user_id
+    }).eq("id_aluno", dados.id_aluno).execute()
+
+    return {"message": "Login criado com sucesso!"}
