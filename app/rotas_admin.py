@@ -786,9 +786,15 @@ def atualizar_meu_perfil(dados: PerfilUpdateData, authorization: str = Header(No
         auth_up = {}
         if dados.email_login: auth_up["email"] = dados.email_login
         if dados.nova_senha: auth_up["password"] = dados.nova_senha
-        if auth_up: supabase.auth.update_user(auth_up)
+            
+        if auth_up: 
+            supabase.auth.admin.update_user_by_id(user_id, auth_up)
+            
         return {"message": "Perfil atualizado!"}
-    except: raise HTTPException(status_code=500)
+    except Exception as e: 
+        # Melhoria: Mostra o erro real no log do servidor
+        print(f"Erro ao atualizar perfil: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/listar-turmas")
