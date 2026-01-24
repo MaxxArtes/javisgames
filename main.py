@@ -15,6 +15,7 @@ from app.modelos import (
     ChatMensagemData
 )
 from app.rotas_admin import router as admin_router
+from app.rotas_aluno import router as aluno_router
 
 # Configuração básica do Logger
 logging.basicConfig(
@@ -36,7 +37,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], 
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -63,11 +64,11 @@ MAPA_CURSOS = {
     "GAME PRO": "game-pro",
     "DESIGNER START": "designer-start",
     "GAME DEV": "game-dev",
-    "STREAMING": "streaming"
 }
 
 # Incluir rotas administrativas
 app.include_router(admin_router)
+app.include_router(aluno_router)
 
 
 # --- FUNÇÕES AUXILIARES ---

@@ -73,7 +73,6 @@ MAPA_CURSOS = {
     "GAME PRO": "game-pro",
     "DESIGNER START": "designer-start",
     "GAME DEV": "game-dev",
-    "STREAMING": "streaming"
 }
 
 
@@ -376,7 +375,6 @@ def get_cursos_permitidos(authorization: str = Header(None)):
             "GAME PRO": "game-pro",
             "DESIGNER START": "designer-start",
             "GAME DEV": "game-dev",
-            "STREAMING": "streaming"
         }
         
         cursos_permitidos = []
@@ -873,9 +871,45 @@ def admin_listar_conversas_ativas(authorization: str = Header(None)):
 
 
 @router.get("/chat/mensagens/{id_aluno}")
-def admin_ler_mensagens(id_aluno: int):
-    msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
-    return msgs.data
+def admin_ler_mensagens(id_aluno: int, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token ausente")
+    try:
+        token = authorization.split(" ")[1]
+        ctx = get_contexto_usuario(token)
+
+        # Permissões:
+        # - Professor (nível 5) só vê alunos das próprias turmas
+        # - Coord/Vendedor/Secretaria (nível < 9) só vê alunos da sua unidade
+        # - Gerência/Diretoria (>= 9) vê tudo
+        permitido = True
+
+        if ctx['nivel'] == 5:
+            turmas_resp = supabase.table("tb_turmas").select("codigo_turma").eq("id_professor", ctx['id_colaborador']).execute()
+            codigos = [t['codigo_turma'] for t in turmas_resp.data]
+            if not codigos:
+                permitido = False
+            else:
+                matr_resp = supabase.table("tb_matriculas").select("id_aluno").in_("codigo_turma", codigos).execute()
+                alunos = [m['id_aluno'] for m in matr_resp.data]
+                permitido = id_aluno in alunos
+
+        elif ctx['nivel'] < 9:
+            alunos_unidade = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
+            alunos = [a['id_aluno'] for a in alunos_unidade.data]
+            permitido = id_aluno in alunos
+
+        if not permitido:
+            raise HTTPException(status_code=403, detail="Sem permissão para acessar esta conversa")
+
+        msgs = supabase.table("tb_chat").select("*").eq("id_aluno", id_aluno).order("created_at").execute()
+        return msgs.data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Erro ao ler mensagens: {e}")
+        raise HTTPException(status_code=500, detail="Erro ao buscar mensagens")
 
 
 @router.post("/chat/responder")
