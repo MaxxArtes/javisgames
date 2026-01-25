@@ -298,9 +298,10 @@ def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
 
     curso_id = mod_resp.data[0]["curso_id"]
 
+    # ✅ SUA TABELA cursos NÃO TEM slug. Pegamos só o titulo.
     curso_resp = (
         supabase.table("cursos")
-        .select("id, titulo, slug")
+        .select("id, titulo")
         .eq("id", curso_id)
         .limit(1)
         .execute()
@@ -309,7 +310,7 @@ def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
         raise HTTPException(status_code=500, detail="Curso não encontrado para esta aula")
 
     curso_row = curso_resp.data[0]
-    curso_slug_aula = _slugify(curso_row.get("slug") or curso_row.get("titulo") or "")
+    curso_slug_aula = _slugify(curso_row.get("titulo") or "")
 
     info = (ctx.get("cursos_by_slug") or {}).get(curso_slug_aula)
     if not info:
@@ -337,4 +338,5 @@ def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
         "conteudo": conteudo,
         "updated_at": _now_iso(),
     }
+
 
