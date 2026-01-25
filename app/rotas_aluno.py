@@ -55,39 +55,98 @@ def _get_user_id_from_token(token: str) -> str:
 def _get_aluno_context(token: str) -> Dict[str, Any]:
     user_id = _get_user_id_from_token(token)
 
-    aluno_resp = supabase.table("tb_alunos")        .select("id_aluno, nome_completo")        .eq("user_id", user_id)        .execute()
+    aluno_resp = (
+        supabase.table("tb_alunos")
+        .select("id_aluno, nome_completo")
+        .eq("user_id", user_id)
+        .execute()
+    )
 
     if not aluno_resp.data:
         raise HTTPException(status_code=403, detail="Conta não vinculada a um aluno")
 
     aluno = aluno_resp.data[0]
 
-    # Matrícula mais recente (ou ativa, se quiser filtrar por status)
-    matricula_resp = (
+    # Todas as matrículas do aluno (da mais recente para a mais antiga)
+    matriculas_resp = (
         supabase.table("tb_matriculas")
         .select("id_matricula, codigo_turma, status_financeiro, data_matricula")
         .eq("id_aluno", aluno["id_aluno"])
         .order("data_matricula", desc=True)
         .order("id_matricula", desc=True)
-        .limit(1)
         .execute()
     )
 
-    matricula = matricula_resp.data[0] if matricula_resp.data else None
+    matriculas = matriculas_resp.data or []
 
-    turma = None
-    if matricula and matricula.get("codigo_turma"):
-        turma_resp = supabase.table("tb_turmas")            .select("codigo_turma, nome_curso, id_professor, data_inicio, qtd_aulas, status, tipo_turma")            .eq("codigo_turma", matricula["codigo_turma"])            .limit(1)            .execute()
-        if turma_resp.data:
-            turma = turma_resp.data[0]
+    # Lista de códigos de turma (únicos, preservando ordem)
+    codigos: List[str] = []
+    for m in matriculas:
+        c = m.get("codigo_turma")
+        if c is None:
+            continue
+        c = str(c).strip()
+        if c:
+            codigos.append(c)
+
+    codigos = list(dict.fromkeys(codigos))
+
+    turma_by_codigo: Dict[str, Any] = {}
+    if codigos:
+        turmas_resp = (
+            supabase.table("tb_turmas")
+            .select(
+                "codigo_turma, nome_curso, id_professor, data_inicio, "
+                "qtd_aulas, status, tipo_turma"
+            )
+            .in_("codigo_turma", codigos)
+            .execute()
+        )
+
+        for t in turmas_resp.data or []:
+            turma_by_codigo[str(t.get("codigo_turma")).strip()] = t
+
+    # Monta cursos permitidos (um por curso), usando a matrícula mais recente daquele curso
+    cursos_by_slug: Dict[str, Any] = {}
+    for m in matriculas:
+        codigo = m.get("codigo_turma")
+        if codigo is None:
+            continue
+        codigo = str(codigo).strip()
+        turma = turma_by_codigo.get(codigo)
+        if not turma:
+            continue
+
+        curso_nome = (turma.get("nome_curso") or "").strip()
+        slug = _slugify(curso_nome)
+        if not slug:
+            continue
+
+        # Como matriculas já vem ordenado desc, a primeira ocorrência do slug é a mais recente
+        if slug not in cursos_by_slug:
+            data_inicio = turma.get("data_inicio") or "2024-01-01"
+            cursos_by_slug[slug] = {
+                "id": slug,
+                "data_inicio": data_inicio,
+                "codigo_turma": turma.get("codigo_turma"),
+                "curso_nome": curso_nome,
+                "turma": turma,
+                "matricula": m,
+            }
+
+    cursos = list(cursos_by_slug.values())
+    cursos.sort(key=lambda x: (x.get("curso_nome") or x.get("id") or ""))
 
     return {
         "user_id": user_id,
         "id_aluno": aluno["id_aluno"],
         "nome": aluno.get("nome_completo") or "",
-        "matricula": matricula,
-        "turma": turma
+        "matriculas": matriculas,
+        "turmas_by_codigo": turma_by_codigo,
+        "cursos_by_slug": cursos_by_slug,
+        "cursos": cursos,
     }
+
 
 
 def _fetch_cursos_didaticos() -> List[Dict[str, Any]]:
@@ -127,30 +186,14 @@ def _flatten_aulas(curso: Dict[str, Any]) -> List[Dict[str, Any]]:
 @router.get("/meus-cursos")
 def meus_cursos(authorization: Optional[str] = Header(None)):
     """
-    Retorna quais cursos o aluno pode acessar com base na matrícula.
-    Mantém o formato que o frontend já usa (id = slug, data_inicio).
+    Retorna todos os cursos que o aluno pode acessar (1 por curso),
+    com base nas matrículas encontradas.
     """
     token = _get_bearer_token(authorization)
     ctx = _get_aluno_context(token)
 
-    turma = ctx.get("turma")
-    if not turma:
-        return {"cursos": []}
+    return {"cursos": ctx.get("cursos", [])}
 
-    # O campo tb_turmas.curso tende a ser um texto como "DESIGNER START"
-    curso_nome = (turma.get("nome_curso") or "").strip()
-    curso_slug = _slugify(curso_nome)
-
-    data_inicio = turma.get("data_inicio") or "2024-01-01"
-
-    return {
-        "cursos": [{
-            "id": curso_slug,
-            "data_inicio": data_inicio,
-            "codigo_turma": turma.get("codigo_turma"),
-            "curso_nome": curso_nome,
-        }]
-    }
 
 
 @router.get("/curso/{curso_slug}/estrutura")
@@ -161,19 +204,21 @@ def curso_estrutura(curso_slug: str, authorization: Optional[str] = Header(None)
     token = _get_bearer_token(authorization)
     ctx = _get_aluno_context(token)
 
-    turma = ctx.get("turma")
-    if not turma:
-        raise HTTPException(status_code=404, detail="Aluno sem turma/matrícula ativa")
-
-    # Garante que o aluno só pega o próprio curso
-    slug_matricula = _slugify((turma.get("nome_curso") or "").strip())
-    if _slugify(curso_slug) != slug_matricula:
+    slug_req = _slugify(curso_slug)
+    info = (ctx.get("cursos_by_slug") or {}).get(slug_req)
+    if not info:
         raise HTTPException(status_code=403, detail="Curso não permitido")
+
+    turma = info["turma"]
+    slug_matricula = slug_req
 
     cursos = _fetch_cursos_didaticos()
 
-    # Encontra curso por slug (se existir em cursos) ou por título
-    curso = next((c for c in cursos if _slugify(c.get("slug") or c.get("titulo") or "") == slug_matricula), None)
+    # Encontra curso didático por slug/título
+    curso = next(
+        (c for c in cursos if _slugify(c.get("slug") or c.get("titulo") or "") == slug_matricula),
+        None,
+    )
     if not curso:
         raise HTTPException(status_code=404, detail="Curso não encontrado no didático")
 
@@ -186,7 +231,6 @@ def curso_estrutura(curso_slug: str, authorization: Optional[str] = Header(None)
         if isinstance(raw_inicio, str):
             di = datetime.fromisoformat(raw_inicio.replace("Z", "+00:00"))
         else:
-            # caso venha como date do driver
             di = datetime.combine(raw_inicio, datetime.min.time())
         if di.tzinfo is None:
             di = di.replace(tzinfo=timezone.utc)
@@ -199,10 +243,9 @@ def curso_estrutura(curso_slug: str, authorization: Optional[str] = Header(None)
     if aulas_liberadas > total_aulas:
         aulas_liberadas = total_aulas
 
-    # Marca aulas liberadas (sem remover conteúdo)
+    # Marca aulas liberadas
     for m in curso.get("modulos", []) or []:
         for a in m.get("aulas", []) or []:
-            # calcula ordem global para esta aula
             ord_global = next((x["ordem_global"] for x in aulas_flat if x["id"] == a.get("id")), None)
             a["ordem_global"] = ord_global
             a["liberada"] = bool(ord_global and ord_global <= aulas_liberadas)
@@ -212,35 +255,79 @@ def curso_estrutura(curso_slug: str, authorization: Optional[str] = Header(None)
     curso_out["aulas_liberadas"] = aulas_liberadas
     curso_out["dias_passados"] = dias_passados
     curso_out["data_inicio"] = turma.get("data_inicio")
+    curso_out["codigo_turma"] = turma.get("codigo_turma")
+    curso_out["curso_nome"] = (turma.get("nome_curso") or "").strip()
 
     return curso_out
+
 
 
 @router.get("/aula/{id_aula}")
 def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
     """
-    Retorna o conteúdo da aula (HTML ou texto com tags).
-    Se houver conteúdo personalizado do professor da turma, entrega esse.
+    Retorna o conteúdo da aula.
+    Se houver conteúdo personalizado do professor da turma do curso, entrega esse.
     """
     token = _get_bearer_token(authorization)
     ctx = _get_aluno_context(token)
-    turma = ctx.get("turma")
-    if not turma:
-        raise HTTPException(status_code=404, detail="Aluno sem turma/matrícula ativa")
 
     # Busca a aula base
-    aula_resp = supabase.table("aulas")        .select("id, titulo, conteudo, modulo_id")        .eq("id", id_aula)        .limit(1)        .execute()
-
+    aula_resp = (
+        supabase.table("aulas")
+        .select("id, titulo, conteudo, modulo_id")
+        .eq("id", id_aula)
+        .limit(1)
+        .execute()
+    )
     if not aula_resp.data:
         raise HTTPException(status_code=404, detail="Aula não encontrada")
 
     aula = aula_resp.data[0]
     conteudo = aula.get("conteudo") or ""
 
-    # Conteúdo personalizado (por professor)
+    # Descobre de qual curso essa aula é (aula -> modulo -> curso)
+    mod_resp = (
+        supabase.table("modulos")
+        .select("curso_id")
+        .eq("id", aula["modulo_id"])
+        .limit(1)
+        .execute()
+    )
+    if not mod_resp.data:
+        raise HTTPException(status_code=500, detail="Módulo inválido para esta aula")
+
+    curso_id = mod_resp.data[0]["curso_id"]
+
+    curso_resp = (
+        supabase.table("cursos")
+        .select("id, titulo, slug")
+        .eq("id", curso_id)
+        .limit(1)
+        .execute()
+    )
+    if not curso_resp.data:
+        raise HTTPException(status_code=500, detail="Curso não encontrado para esta aula")
+
+    curso_row = curso_resp.data[0]
+    curso_slug_aula = _slugify(curso_row.get("slug") or curso_row.get("titulo") or "")
+
+    info = (ctx.get("cursos_by_slug") or {}).get(curso_slug_aula)
+    if not info:
+        raise HTTPException(status_code=403, detail="Curso não permitido")
+
+    turma = info["turma"]
     id_professor = turma.get("id_professor")
+
+    # Conteúdo personalizado (por professor)
     if id_professor:
-        pers_resp = supabase.table("conteudos_personalizados")            .select("conteudo")            .eq("id_aula", id_aula)            .eq("id_professor", id_professor)            .limit(1)            .execute()
+        pers_resp = (
+            supabase.table("conteudos_personalizados")
+            .select("conteudo")
+            .eq("id_aula", id_aula)
+            .eq("id_professor", id_professor)
+            .limit(1)
+            .execute()
+        )
         if pers_resp.data and pers_resp.data[0].get("conteudo"):
             conteudo = pers_resp.data[0]["conteudo"]
 
@@ -248,5 +335,6 @@ def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
         "id": aula.get("id"),
         "titulo": aula.get("titulo"),
         "conteudo": conteudo,
-        "updated_at": _now_iso()
+        "updated_at": _now_iso(),
     }
+
