@@ -185,14 +185,16 @@ def _flatten_aulas(curso: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 @router.get("/meus-cursos")
 def meus_cursos(authorization: Optional[str] = Header(None)):
-    """
-    Retorna todos os cursos que o aluno pode acessar (1 por curso),
-    com base nas matrículas encontradas.
-    """
     token = _get_bearer_token(authorization)
     ctx = _get_aluno_context(token)
 
-    return {"cursos": ctx.get("cursos", [])}
+    # Adicionamos o nome do aluno no retorno
+    return {
+        "nome": ctx.get("nome", "Aluno"),
+        "cursos": ctx.get("cursos", [])
+    }
+
+    
 
 
 
