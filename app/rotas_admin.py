@@ -1418,3 +1418,64 @@ def criar_login_aluno(dados: NovoUsuarioData, authorization: str = Header(None))
     }).eq("id_aluno", dados.id_aluno).execute()
 
     return {"message": "Login criado com sucesso!"}
+
+@router.put("/editar-aluno/{id_aluno}")
+def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    # Mantém o mesmo critério do resto: gerência (8+)
+    if ctx["nivel"] < 8:
+        raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
+
+    # Busca aluno e valida unidade (se não for nível 9+)
+    aluno_resp = supabase.table("tb_alunos").select("id_aluno,id_unidade,user_id").eq("id_aluno", id_aluno).single().execute()
+    if not aluno_resp.data:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado.")
+
+    if ctx["nivel"] < 9 and aluno_resp.data.get("id_unidade") != ctx["id_unidade"]:
+        raise HTTPException(status_code=403, detail="Sem permissão para editar aluno de outra unidade.")
+
+    updates = {}
+    if getattr(dados, "nome", None):
+        updates["nome_completo"] = dados.nome.upper()
+    if getattr(dados, "cpf", None):
+        updates["cpf"] = dados.cpf
+    if getattr(dados, "email", None):
+        updates["email"] = dados.email
+    if getattr(dados, "celular", None):
+        updates["celular"] = dados.celular
+    if getattr(dados, "telefone", None):
+        updates["telefone"] = dados.telefone
+
+    if updates:
+        supabase.table("tb_alunos").update(updates).eq("id_aluno", id_aluno).execute()
+
+    # Atualiza turma na matrícula (se vier turma_codigo)
+    turma_codigo = getattr(dados, "turma_codigo", None)
+    if turma_codigo:
+        # pega a matrícula mais recente (ajuste se sua tabela não tiver created_at)
+        mats = supabase.table("tb_matriculas").select("*").eq("id_aluno", id_aluno).order("created_at", desc=True).limit(1).execute()
+
+        if mats.data:
+            # ajuste o nome da PK se não for "id"
+            pk = "id" if "id" in mats.data[0] else ("id_matricula" if "id_matricula" in mats.data[0] else None)
+            if not pk:
+                # fallback: atualiza pela combinação (menos ideal)
+                supabase.table("tb_matriculas").update({"codigo_turma": turma_codigo}).eq("id_aluno", id_aluno).execute()
+            else:
+                supabase.table("tb_matriculas").update({"codigo_turma": turma_codigo}).eq(pk, mats.data[0][pk]).execute()
+        else:
+            # se não existir matrícula, cria uma (mesma lógica do cadastro)
+            supabase.table("tb_matriculas").insert({
+                "id_aluno": id_aluno,
+                "codigo_turma": turma_codigo,
+                "id_vendedor": ctx["id_colaborador"],
+                "status_financeiro": "Ok"
+            }).execute()
+
+    return {"message": "Aluno atualizado!"}
+
