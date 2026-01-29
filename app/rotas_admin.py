@@ -1479,3 +1479,33 @@ def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str
 
     return {"message": "Aluno atualizado!"}
 
+# 7. SISTEMA DE CHAMADA
+
+@router.get("/chamada/turma/{codigo_turma}")
+def listar_alunos_chamada(codigo_turma: str, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    try:
+        # Busca alunos matriculados na turma específica
+        resp = supabase.table("tb_matriculas")\
+            .select("id_aluno, tb_alunos(nome_completo)")\
+            .eq("codigo_turma", codigo_turma)\
+            .execute()
+        return resp.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/chamada/salvar")
+def salvar_chamada(dados: list, authorization: str = Header(None)):
+    if not authorization: raise HTTPException(status_code=401)
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+    try:
+        # Os dados devem vir como uma lista de objetos: [{id_aluno, codigo_turma, presenca}]
+        for item in dados:
+            item['id_professor'] = ctx['id_colaborador']
+            item['data_aula'] = datetime.now().strftime("%Y-%m-%d")
+            
+        supabase.table("tb_chamadas").upsert(dados, on_conflict="id_aluno,codigo_turma,data_aula").execute()
+        return {"message": "Chamada realizada com sucesso!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
