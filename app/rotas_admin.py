@@ -8,8 +8,10 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta
 import requests
 import logging
-from datetime import datetime
+from typing import Optional
 from app.modelos import (
+    FestaAniversarioCreate,
+    FestaAniversarioUpdate,
     FuncionarioEdicaoData,
     PerfilUpdateData,
     ReposicaoEdicaoData,
@@ -1507,5 +1509,137 @@ def salvar_chamada(dados: list, authorization: str = Header(None)):
             
         supabase.table("tb_chamadas").upsert(dados, on_conflict="id_aluno,codigo_turma,data_aula").execute()
         return {"message": "Chamada realizada com sucesso!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+@router.get("/festas-aniversario")
+def listar_festas_aniversario(
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    data_ini: Optional[str] = None,     # YYYY-MM-DD
+    data_fim: Optional[str] = None,     # YYYY-MM-DD
+    id_vendedor: Optional[int] = None,
+    id_unidade: Optional[int] = None,
+    sort_by: str = "data_festa",
+    sort_dir: str = "asc",
+    authorization: str = Header(None)
+):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    if ctx["nivel"] not in (8, 9, 10):
+        raise HTTPException(status_code=403, detail="Acesso restrito (nível 8/9/10).")
+
+    try:
+        # ✅ joins: unidade e vendedor (ajusta conforme seus relacionamentos/constraints no Supabase)
+        query = supabase.table("tb_festas_aniversario") \
+            .select("*, tb_unidades(nome_unidade), tb_colaboradores(nome_completo)")  # exige FK p/ funcionar bem
+
+        # filtros
+        if status:
+            query = query.eq("status", status)
+
+        if data_ini:
+            query = query.gte("data_festa", data_ini)
+
+        if data_fim:
+            query = query.lte("data_festa", data_fim)
+
+        if id_vendedor:
+            query = query.eq("id_vendedor", id_vendedor)
+
+        # unidade:
+        # - se gerente (8): força a unidade do contexto
+        # - se diretor (9/10): pode filtrar
+        if ctx["nivel"] < 9:
+            query = query.eq("id_unidade", ctx["id_unidade"])
+        else:
+            if id_unidade:
+                query = query.eq("id_unidade", id_unidade)
+
+        # busca simples
+        if q:
+            query = query.or_(f"contratante.ilike.%{q}%,aniversariante.ilike.%{q}%,quem_vendeu.ilike.%{q}%")
+
+        # sort
+        desc = (sort_dir.lower() == "desc")
+        query = query.order(sort_by, desc=desc)
+
+        return query.execute().data
+    except Exception as e:
+        print("Erro festas-aniversario:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/festas-aniversario/vendedores")
+def listar_vendedores_festas(authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    if ctx["nivel"] not in (8, 9, 10):
+        raise HTTPException(status_code=403, detail="Acesso restrito (nível 8/9/10).")
+
+    try:
+        q = supabase.table("tb_colaboradores") \
+            .select("id_colaborador, nome_completo") \
+            .eq("ativo", True) \
+            .order("nome_completo")
+
+        # gerente vê só unidade dele, diretor pode ver tudo
+        if ctx["nivel"] < 9:
+            q = q.eq("id_unidade", ctx["id_unidade"])
+
+        return q.execute().data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@router.post("/festas-aniversario")
+def criar_festa_aniversario(dados: FestaAniversarioCreate, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    if ctx["nivel"] not in (8, 9, 10):
+        raise HTTPException(status_code=403, detail="Acesso restrito (nível 8/9/10).")
+
+    try:
+        payload = dados.model_dump(exclude_none=True)
+
+        # ✅ default: Cuiabá (se não vier)
+        if "id_unidade" not in payload or payload["id_unidade"] is None:
+            payload["id_unidade"] = 1
+
+        # (opcional) preencher "quem_vendeu" se você quiser manter compatibilidade
+        # se tiver id_vendedor, você pode buscar o nome e salvar no campo texto também.
+        supabase.table("tb_festas_aniversario").insert(payload).execute()
+        return {"message": "Festa cadastrada!"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/festas-aniversario/{id_festa}")
+def editar_festa_aniversario(id_festa: int, dados: FestaAniversarioUpdate, authorization: str = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401)
+
+    token = authorization.split(" ")[1]
+    ctx = get_contexto_usuario(token)
+
+    if ctx["nivel"] not in (8, 9, 10):
+        raise HTTPException(status_code=403, detail="Acesso restrito (nível 8/9/10).")
+
+    try:
+        payload = dados.model_dump(exclude_none=True)
+        if not payload:
+            return {"message": "Nada para atualizar."}
+
+        supabase.table("tb_festas_aniversario").update(payload).eq("id_festa", id_festa).execute()
+        return {"message": "Festa atualizada!"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

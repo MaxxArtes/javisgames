@@ -3,6 +3,38 @@ Modelos Pydantic para validação de dados
 """
 from pydantic import BaseModel
 
+class FestaAniversarioCreate(BaseModel):
+    data_festa: str | None = None          # YYYY-MM-DD
+    horario: str | None = None
+    contratante: str | None = None
+    telefone: str | None = None
+    aniversariante: str | None = None
+    idade: int | None = None
+    data_pagamento: str | None = None      # YYYY-MM-DD
+    kit_festa: bool | None = None
+    valor: float | None = None
+    status: str | None = "PARA_ACONTECER"
+
+    # ✅ novos campos
+    id_vendedor: int | None = None
+    id_unidade: int | None = None
+
+
+class FestaAniversarioUpdate(BaseModel):
+    data_festa: str | None = None
+    horario: str | None = None
+    contratante: str | None = None
+    telefone: str | None = None
+    aniversariante: str | None = None
+    idade: int | None = None
+    data_pagamento: str | None = None
+    kit_festa: bool | None = None
+    valor: float | None = None
+    status: str | None = None
+
+    id_vendedor: int | None = None
+    id_unidade: int | None = None
+
 class NovoUsuarioData(BaseModel):
     id_aluno: int
     email: str
