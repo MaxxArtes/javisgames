@@ -1534,21 +1534,23 @@ def listar_festas_aniversario(
     if ctx["nivel"] not in (8, 9, 10):
         raise HTTPException(status_code=403, detail="Acesso restrito (nível 8/9/10).")
 
-    allowed_sort = {"data_festa", "created_at", "contratante", "aniversariante", "valor", "status"}
+    # ✅ agora suporta ordenação por TODAS as colunas do cabeçalho
+    allowed_sort = {
+        "data_festa", "horario", "contratante", "telefone", "aniversariante",
+        "idade", "data_pagamento", "kit_festa", "valor",
+        "id_vendedor", "id_unidade", "status", "created_at"
+    }
     if sort_by not in allowed_sort:
         sort_by = "data_festa"
 
     desc = (sort_dir or "").lower() == "desc"
 
     try:
-        # ✅ JOIN via FK
-        # Se o cache demorar, use a versão "join explícito" logo abaixo.
+        # joins via FK (suas constraints precisam ter esses nomes)
         query = supabase.table("tb_festas_aniversario").select(
             "*, tb_unidades!fk_festas_unidade(nome_unidade), tb_colaboradores!fk_festas_vendedor(nome_completo)"
         )
 
-
-        # filtros
         if status:
             query = query.eq("status", status)
 
@@ -1562,8 +1564,6 @@ def listar_festas_aniversario(
             query = query.eq("id_vendedor", id_vendedor)
 
         # unidade:
-        # nível 8 -> força unidade dele
-        # nível 9/10 -> pode filtrar unidade (se enviar id_unidade)
         if ctx["nivel"] == 8:
             query = query.eq("id_unidade", ctx["id_unidade"])
         else:
