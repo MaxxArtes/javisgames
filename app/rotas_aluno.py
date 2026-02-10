@@ -266,79 +266,86 @@ def curso_estrutura(curso_slug: str, authorization: Optional[str] = Header(None)
 
 @router.get("/aula/{id_aula}")
 def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
-    """
-    Retorna o conteúdo da aula.
-    Se houver conteúdo personalizado do professor da turma do curso, entrega esse.
-    """
     token = _get_bearer_token(authorization)
     ctx = _get_aluno_context(token)
 
-    # Busca a aula base
-    aula_resp = (
-        supabase.table("aulas")
-        .select("id, titulo, conteudo, modulo_id")
-        .eq("id", id_aula)
-        .limit(1)
-        .execute()
-    )
-    if not aula_resp.data:
-        raise HTTPException(status_code=404, detail="Aula não encontrada")
-
-    aula = aula_resp.data[0]
-    conteudo = aula.get("conteudo") or ""
-
-    # Descobre de qual curso essa aula é (aula -> modulo -> curso)
-    mod_resp = (
-        supabase.table("modulos")
-        .select("curso_id")
-        .eq("id", aula["modulo_id"])
-        .limit(1)
-        .execute()
-    )
-    if not mod_resp.data:
-        raise HTTPException(status_code=500, detail="Módulo inválido para esta aula")
-
-    curso_id = mod_resp.data[0]["curso_id"]
-
-    # ✅ SUA TABELA cursos NÃO TEM slug. Pegamos só o titulo.
-    curso_resp = (
-        supabase.table("cursos")
-        .select("id, titulo")
-        .eq("id", curso_id)
-        .limit(1)
-        .execute()
-    )
-    if not curso_resp.data:
-        raise HTTPException(status_code=500, detail="Curso não encontrado para esta aula")
-
-    curso_row = curso_resp.data[0]
-    curso_slug_aula = _slugify(curso_row.get("titulo") or "")
-
-    info = (ctx.get("cursos_by_slug") or {}).get(curso_slug_aula)
-    if not info:
-        raise HTTPException(status_code=403, detail="Curso não permitido")
-
-    turma = info["turma"]
-    id_professor = turma.get("id_professor")
-
-    # Conteúdo personalizado (por professor)
-    if id_professor:
-        pers_resp = (
-            supabase.table("conteudos_personalizados")
-            .select("conteudo")
-            .eq("id_aula", id_aula)
-            .eq("id_professor", id_professor)
+    try:
+        aula_resp = (
+            supabase.table("aulas")
+            .select("*")  # <- ajuda a não quebrar por coluna errada (temporário)
+            .eq("id", id_aula)
             .limit(1)
             .execute()
         )
-        if pers_resp.data and pers_resp.data[0].get("conteudo"):
-            conteudo = pers_resp.data[0]["conteudo"]
+        if not aula_resp.data:
+            raise HTTPException(status_code=404, detail="Aula não encontrada")
 
-    return {
-        "id": aula.get("id"),
-        "titulo": aula.get("titulo"),
-        "conteudo": conteudo,
-        "updated_at": _now_iso(),
-    }
+        aula = aula_resp.data[0]
+        conteudo = aula.get("conteudo") or ""
 
+        # aceita modulo_id ou id_modulo (caso seu banco use outro nome)
+        modulo_id = aula.get("modulo_id") or aula.get("id_modulo")
+        if not modulo_id:
+            raise HTTPException(status_code=500, detail="Aula sem modulo_id/id_modulo no banco")
+
+        mod_resp = (
+            supabase.table("modulos")
+            .select("*")  # <- temporário
+            .eq("id", modulo_id)
+            .limit(1)
+            .execute()
+        )
+        if not mod_resp.data:
+            raise HTTPException(status_code=500, detail="Módulo inválido para esta aula")
+
+        mod = mod_resp.data[0]
+        curso_id = mod.get("curso_id") or mod.get("id_curso")
+        if not curso_id:
+            raise HTTPException(status_code=500, detail="Módulo sem curso_id/id_curso no banco")
+
+        curso_resp = (
+            supabase.table("cursos")
+            .select("*")  # <- temporário
+            .eq("id", curso_id)
+            .limit(1)
+            .execute()
+        )
+        if not curso_resp.data:
+            raise HTTPException(status_code=500, detail="Curso não encontrado para esta aula")
+
+        curso_row = curso_resp.data[0]
+        curso_slug_aula = _slugify(curso_row.get("titulo") or "")
+
+        info = (ctx.get("cursos_by_slug") or {}).get(curso_slug_aula)
+        if not info:
+            raise HTTPException(status_code=403, detail="Curso não permitido")
+
+        turma = info["turma"]
+        id_professor = turma.get("id_professor")
+
+        if id_professor:
+            pers_resp = (
+                supabase.table("conteudos_personalizados")
+                .select("conteudo")
+                .eq("id_aula", id_aula)
+                .eq("id_professor", id_professor)
+                .limit(1)
+                .execute()
+            )
+            if pers_resp.data and pers_resp.data[0].get("conteudo"):
+                conteudo = pers_resp.data[0]["conteudo"]
+
+        return {
+            "id": aula.get("id"),
+            "titulo": aula.get("titulo"),
+            "conteudo": conteudo,
+            "updated_at": _now_iso(),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Isso vai aparecer no Render Logs:
+        print("ERRO obter_aula:", repr(e))
+        raise HTTPException(status_code=500, detail=f"Erro interno obter_aula: {e}")
 
