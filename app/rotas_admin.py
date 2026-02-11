@@ -1485,63 +1485,122 @@ def criar_login_aluno(dados: NovoUsuarioData, authorization: str = Header(None))
 
 @router.put("/editar-aluno/{id_aluno}")
 def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401)
+    # Valida header Bearer
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token ausente")
 
-    token = authorization.split(" ")[1]
+    token = authorization.split(" ", 1)[1]
     ctx = get_contexto_usuario(token)
 
-    # Mantém o mesmo critério do resto: gerência (8+)
+    # Gerência (8+)
     if ctx["nivel"] < 8:
         raise HTTPException(status_code=403, detail="Acesso restrito à Gerência.")
 
-    # Busca aluno e valida unidade (se não for nível 9+)
-    aluno_resp = supabase.table("tb_alunos").select("id_aluno,id_unidade,user_id").eq("id_aluno", id_aluno).single().execute()
-    if not aluno_resp.data:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado.")
+    try:
+        # Busca aluno (inclui email pra possível rollback)
+        aluno_resp = (
+            supabase.table("tb_alunos")
+            .select("id_aluno,id_unidade,user_id,email")
+            .eq("id_aluno", id_aluno)
+            .single()
+            .execute()
+        )
 
-    if ctx["nivel"] < 9 and aluno_resp.data.get("id_unidade") != ctx["id_unidade"]:
-        raise HTTPException(status_code=403, detail="Sem permissão para editar aluno de outra unidade.")
+        if not aluno_resp.data:
+            raise HTTPException(status_code=404, detail="Aluno não encontrado.")
 
-    updates = {}
-    if getattr(dados, "nome", None):
-        updates["nome_completo"] = dados.nome.upper()
-    if getattr(dados, "cpf", None):
-        updates["cpf"] = dados.cpf
-    if getattr(dados, "email", None):
-        updates["email"] = dados.email
-    if getattr(dados, "celular", None):
-        updates["celular"] = dados.celular
-    if getattr(dados, "telefone", None):
-        updates["telefone"] = dados.telefone
+        aluno = aluno_resp.data
 
-    if updates:
-        supabase.table("tb_alunos").update(updates).eq("id_aluno", id_aluno).execute()
+        # Se não for nível 9+, só edita aluno da própria unidade
+        if ctx["nivel"] < 9 and aluno.get("id_unidade") != ctx["id_unidade"]:
+            raise HTTPException(status_code=403, detail="Sem permissão para editar aluno de outra unidade.")
 
-    # Atualiza turma na matrícula (se vier turma_codigo)
-    turma_codigo = getattr(dados, "turma_codigo", None)
-    if turma_codigo:
-        # pega a matrícula mais recente (ajuste se sua tabela não tiver created_at)
-        mats = supabase.table("tb_matriculas").select("*").eq("id_aluno", id_aluno).order("created_at", desc=True).limit(1).execute()
+        updates = {}
 
-        if mats.data:
-            # ajuste o nome da PK se não for "id"
-            pk = "id" if "id" in mats.data[0] else ("id_matricula" if "id_matricula" in mats.data[0] else None)
-            if not pk:
-                # fallback: atualiza pela combinação (menos ideal)
-                supabase.table("tb_matriculas").update({"codigo_turma": turma_codigo}).eq("id_aluno", id_aluno).execute()
+        if getattr(dados, "nome", None):
+            updates["nome_completo"] = dados.nome.upper()
+
+        if getattr(dados, "cpf", None):
+            updates["cpf"] = dados.cpf
+
+        if getattr(dados, "celular", None):
+            updates["celular"] = dados.celular
+
+        if getattr(dados, "telefone", None):
+            updates["telefone"] = dados.telefone
+
+        # ✅ Email: versão MAIS SEGURA
+        # - atualiza o Auth SEM auto-confirmar
+        # - depois atualiza tb_alunos
+        # - se tb_alunos falhar, tenta reverter o Auth pro email anterior (se houver)
+        novo_email = getattr(dados, "email", None)
+        if novo_email:
+            novo_email = novo_email.strip().lower()
+
+            user_id = aluno.get("user_id")
+            if not user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Aluno não possui login (user_id). Use 'Criar Login do Aluno' antes de alterar o e-mail."
+                )
+
+            email_anterior_db = (aluno.get("email") or "").strip().lower() or None
+
+            # 1) Atualiza email do Auth (SEM email_confirm)
+            # Isso pode disparar fluxo de confirmação dependendo das configs do Supabase Auth.
+            supabase.auth.admin.update_user_by_id(str(user_id), {"email": novo_email})
+
+            # 2) Atualiza tb_alunos
+            try:
+                updates["email"] = novo_email
+                supabase.table("tb_alunos").update(updates).eq("id_aluno", id_aluno).execute()
+                # remove do updates pra não re-updar duas vezes abaixo
+                updates.pop("email", None)
+            except Exception as e_db:
+                # 3) rollback do Auth (melhor esforço)
+                if email_anterior_db:
+                    try:
+                        supabase.auth.admin.update_user_by_id(str(user_id), {"email": email_anterior_db})
+                    except Exception:
+                        pass
+                raise HTTPException(status_code=400, detail=f"Erro ao salvar e-mail no aluno: {str(e_db)}")
+
+        # Atualiza tb_alunos (demais campos)
+        if updates:
+            supabase.table("tb_alunos").update(updates).eq("id_aluno", id_aluno).execute()
+
+        # Atualiza turma na matrícula (se vier turma_codigo)
+        turma_codigo = getattr(dados, "turma_codigo", None)
+        if turma_codigo:
+            # tb_matriculas não tem created_at no seu caso -> usa id_matricula
+            mats = (
+                supabase.table("tb_matriculas")
+                .select("id_matricula")
+                .eq("id_aluno", id_aluno)
+                .order("id_matricula", desc=True)
+                .limit(1)
+                .execute()
+            )
+
+            if mats.data:
+                supabase.table("tb_matriculas").update({"codigo_turma": turma_codigo}).eq(
+                    "id_matricula", mats.data[0]["id_matricula"]
+                ).execute()
             else:
-                supabase.table("tb_matriculas").update({"codigo_turma": turma_codigo}).eq(pk, mats.data[0][pk]).execute()
-        else:
-            # se não existir matrícula, cria uma (mesma lógica do cadastro)
-            supabase.table("tb_matriculas").insert({
-                "id_aluno": id_aluno,
-                "codigo_turma": turma_codigo,
-                "id_vendedor": ctx["id_colaborador"],
-                "status_financeiro": "Ok"
-            }).execute()
+                supabase.table("tb_matriculas").insert({
+                    "id_aluno": id_aluno,
+                    "codigo_turma": turma_codigo,
+                    "id_vendedor": ctx["id_colaborador"],
+                    "status_financeiro": "Ok"
+                }).execute()
 
-    return {"message": "Aluno atualizado!"}
+        return {"message": "Aluno atualizado!"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao atualizar aluno: {str(e)}")
+
 
 # 7. SISTEMA DE CHAMADA
 
