@@ -72,3 +72,15 @@ dmypy.json
 # Arquivos do sistema
 Thumbs.db
 Desktop.ini
+
+# accidental files
+-H
+cd
+curl
+
+
+# accidental files
+-H
+cd
+curl
+
