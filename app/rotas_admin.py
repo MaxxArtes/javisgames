@@ -437,42 +437,81 @@ def get_conteudo_aula(titulo: str):
 
 @router.post("/cadastrar-aluno")
 def admin_cadastrar_aluno(dados: NovoAlunoData, authorization: str = Header(None)):
-    if not authorization: raise HTTPException(status_code=401)
-    token = authorization.split(" ")[1]
+    # Validação do header
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token ausente")
+
+    token = authorization.split(" ", 1)[1]
     ctx = get_contexto_usuario(token)
-    
+
+    # Permissão (alinha com seu front: menu-cadastro só aparece no 8+)
+    if ctx["nivel"] < 8:
+        raise HTTPException(status_code=403, detail="Acesso restrito.")
+
+    new_user_id = None
+    novo_id_aluno = None
+
     try:
-        user_auth = supabase.auth.admin.create_user({ "email": dados.email, "password": dados.senha, "email_confirm": True })
+        # 1) Cria o usuário no Supabase Auth
+        user_auth = supabase.auth.admin.create_user({
+            "email": dados.email,
+            "password": dados.senha,
+            "email_confirm": True
+        })
         new_user_id = user_auth.user.id
 
+        # 2) Formata nascimento (se você usa YYYYMMDD no banco)
         nasc_formatado = None
-        if dados.data_nascimento: nasc_formatado = dados.data_nascimento.replace("-", "")[:8]
+        if dados.data_nascimento:
+            nasc_formatado = dados.data_nascimento.replace("-", "")[:8]
 
+        # 3) Cria aluno (tb_alunos)
         aluno_resp = supabase.table("tb_alunos").insert({
             "nome_completo": dados.nome,
             "cpf": dados.cpf,
-            "email": dados.email,
+            "email": dados.email,              # precisa existir a coluna
             "celular": dados.celular,
             "telefone": dados.telefone,
             "data_nascimento": nasc_formatado,
             "user_id": new_user_id,
-            "id_unidade": ctx['id_unidade']
+            "id_unidade": ctx["id_unidade"],
         }).execute()
-        
-        if not aluno_resp.data: raise Exception("Erro aluno")
-        novo_id_aluno = aluno_resp.data[0]['id_aluno']
 
-        supabase.table("tb_matriculas").insert({
+        if not aluno_resp.data:
+            raise Exception("Falha ao inserir aluno em tb_alunos.")
+
+        novo_id_aluno = aluno_resp.data[0]["id_aluno"]
+
+        # 4) Cria matrícula (tb_matriculas)
+        mat_resp = supabase.table("tb_matriculas").insert({
             "id_aluno": novo_id_aluno,
             "codigo_turma": dados.turma_codigo,
-            "id_vendedor": ctx['id_colaborador'],
+            "id_vendedor": ctx["id_colaborador"],
             "status_financeiro": "Ok"
         }).execute()
 
-        return {"message": "Sucesso!"}
+        if not mat_resp.data:
+            raise Exception("Falha ao inserir matrícula em tb_matriculas.")
+
+        return {"message": "Sucesso!", "id_aluno": novo_id_aluno, "user_id": new_user_id}
+
     except Exception as e:
-        print(f"Erro cadastro: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        # Cleanup do que foi criado (rollback)
+        # Se inseriu aluno mas não completou, remove aluno
+        if novo_id_aluno:
+            try:
+                supabase.table("tb_alunos").delete().eq("id_aluno", novo_id_aluno).execute()
+            except Exception:
+                pass
+
+        # Se criou usuário no Auth, remove usuário
+        if new_user_id:
+            try:
+                supabase.auth.admin.delete_user(new_user_id)  # :contentReference[oaicite:1]{index=1}
+            except Exception:
+                pass
+
+        raise HTTPException(status_code=400, detail=f"Erro cadastro: {str(e)}")
 
 
 @router.get("/listar-alunos")
@@ -1384,42 +1423,65 @@ def admin_listar_cursos_didaticos(authorization: str = Header(None)):
         return []
 @router.post("/criar-login-aluno")
 def criar_login_aluno(dados: NovoUsuarioData, authorization: str = Header(None)):
-    if not authorization:
-        raise HTTPException(status_code=401)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token ausente")
 
-    token = authorization.split(" ")[1]
+    token = authorization.split(" ", 1)[1]
     ctx = get_contexto_usuario(token)
 
-    # Valida permissões (mesma lógica de admin_listar_alunos ou cadastrar-aluno)
-    if ctx['nivel'] < 8:  # ajuste conforme sua lógica de permissão
+    if ctx["nivel"] < 8:
         raise HTTPException(status_code=403, detail="Acesso restrito.")
 
-    # Verifica se o aluno existe
-    aluno = supabase.table("tb_alunos").select("user_id").eq("id_aluno", dados.id_aluno).single().execute()
-    if not aluno.data:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado.")
-    if aluno.data.get("user_id"):
-        raise HTTPException(status_code=400, detail="Aluno já possui login.")
+    new_user_id = None
 
-    # Cria o usuário no Supabase Auth
     try:
+        # Verifica se aluno existe e ainda não tem user_id
+        try:
+            aluno = supabase.table("tb_alunos")\
+                .select("id_aluno, user_id")\
+                .eq("id_aluno", dados.id_aluno)\
+                .single()\
+                .execute()
+        except Exception:
+            aluno = None
+
+        if not aluno or not aluno.data:
+            raise HTTPException(status_code=404, detail="Aluno não encontrado.")
+
+        if aluno.data.get("user_id"):
+            raise HTTPException(status_code=400, detail="Aluno já possui login.")
+
+        # Cria usuário no Auth
         user_auth = supabase.auth.admin.create_user({
             "email": dados.email,
             "password": dados.senha,
             "email_confirm": True
         })
+        new_user_id = user_auth.user.id
+
+        # Atualiza tb_alunos com user_id e email
+        up = supabase.table("tb_alunos").update({
+            "email": dados.email,      # precisa existir a coluna
+            "user_id": new_user_id
+        }).eq("id_aluno", dados.id_aluno).execute()
+
+        if not up.data:
+            raise Exception("Falha ao atualizar tb_alunos com user_id/email.")
+
+        return {"message": "Login criado com sucesso!", "user_id": new_user_id}
+
+    except HTTPException:
+        # repassa erros HTTP corretamente
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao criar usuário: {str(e)}")
+        # rollback: remove usuário do Auth se já criou
+        if new_user_id:
+            try:
+                supabase.auth.admin.delete_user(new_user_id)  # :contentReference[oaicite:2]{index=2}
+            except Exception:
+                pass
 
-    new_user_id = user_auth.user.id
-
-    # Atualiza a tabela tb_alunos com user_id e e-mail
-    supabase.table("tb_alunos").update({
-        "email": dados.email,
-        "user_id": new_user_id
-    }).eq("id_aluno", dados.id_aluno).execute()
-
-    return {"message": "Login criado com sucesso!"}
+        raise HTTPException(status_code=500, detail=f"Erro ao criar login: {str(e)}")
 
 @router.put("/editar-aluno/{id_aluno}")
 def admin_editar_aluno(id_aluno: int, dados: AlunoEdicaoData, authorization: str = Header(None)):
