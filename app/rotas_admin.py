@@ -598,89 +598,77 @@ def admin_reposicao(dados: ReposicaoData, authorization: str = Header(None)):
 
 @router.get("/agenda-geral")
 def admin_agenda(authorization: str = Header(None)):
-    if not authorization: raise HTTPException(status_code=401)
-    token = authorization.split(" ")[1]
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token ausente")
+
+    token = authorization.split(" ", 1)[1]
     ctx = get_contexto_usuario(token)
+
     try:
         eventos = []
-        
-        # 1. BUSCA REPOSIÇÕES
-        if ctx['nivel'] < 9:
-            # Filtra alunos da unidade para pegar os IDs
-            alunos = supabase.table("tb_alunos").select("id_aluno").eq("id_unidade", ctx['id_unidade']).execute()
-            ids = [a['id_aluno'] for a in alunos.data]
-            
-            # Busca reposições desses alunos
-            if not ids: 
-                resp_repo = None # Se não tem alunos, não tem reposição
-            else:
-                resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").in_("id_aluno", ids).execute()
+
+        # 1) BUSCA REPOSIÇÕES (único tipo que ficará na agenda)
+        if ctx["nivel"] < 9:
+            alunos = (
+                supabase.table("tb_alunos")
+                .select("id_aluno")
+                .eq("id_unidade", ctx["id_unidade"])
+                .execute()
+            )
+            ids = [a["id_aluno"] for a in (alunos.data or [])]
+
+            resp_repo = None
+            if ids:
+                resp_repo = (
+                    supabase.table("tb_reposicoes")
+                    .select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")
+                    .in_("id_aluno", ids)
+                    .execute()
+                )
         else:
-            # Diretor vê tudo
-            resp_repo = supabase.table("tb_reposicoes").select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)").execute()
-        
+            resp_repo = (
+                supabase.table("tb_reposicoes")
+                .select("*, tb_alunos(nome_completo), tb_colaboradores(nome_completo)")
+                .execute()
+            )
+
         if resp_repo and resp_repo.data:
             for rep in resp_repo.data:
-                # Extrai nomes com segurança
                 nome_aluno = "Aluno?"
-                if rep.get('tb_alunos'): 
-                    nome_aluno = rep['tb_alunos'].get('nome_completo', 'Aluno?')
-                
+                if rep.get("tb_alunos"):
+                    nome_aluno = rep["tb_alunos"].get("nome_completo", "Aluno?")
+
                 nome_prof = "?"
-                if rep.get('tb_colaboradores'): 
-                    nome_prof = rep['tb_colaboradores'].get('nome_completo', '?')
-                
+                if rep.get("tb_colaboradores"):
+                    nome_prof = rep["tb_colaboradores"].get("nome_completo", "?")
+
                 eventos.append({
-                    "id": rep['id'],
+                    "id": rep["id"],
                     "title": f"🔄 Reposição: {nome_aluno}",
-                    "start": rep['data_reposicao'],
+                    "start": rep["data_reposicao"],
                     "color": "#ff4d4d",
                     "tipo": "reposicao",
                     "nome_aluno": nome_aluno,
                     "nome_prof": nome_prof,
-                    "conteudo": rep['conteudo_aula'],
-                    "turma": rep['codigo_turma'],
-                    "presenca": rep['presenca'],
-                    "observacoes": rep['observacoes'],
-                    "arquivo": rep['arquivo_assinatura'],
-                    "extendedProps": { 
-                        "conteudo": rep['conteudo_aula'],
-                        "id_criador": rep['criado_por']
+                    "conteudo": rep.get("conteudo_aula"),
+                    "turma": rep.get("codigo_turma"),
+                    "presenca": rep.get("presenca"),
+                    "observacoes": rep.get("observacoes"),
+                    "arquivo": rep.get("arquivo_assinatura"),
+                    "extendedProps": {
+                        "conteudo": rep.get("conteudo_aula"),
+                        "id_criador": rep.get("criado_por")
                     }
                 })
 
-        # 2. BUSCA TURMAS (Aulas Recorrentes)
-        query_t = supabase.table("tb_turmas").select("*, tb_colaboradores(nome_completo)").in_("status", ["Em Andamento", "Planejada"])
-        if ctx['nivel'] < 9: 
-            query_t = query_t.eq("id_unidade", ctx['id_unidade'])
-        
-        resp_turmas = query_t.execute()
-
-        for turma in resp_turmas.data:
-            if not turma['data_inicio'] or not turma['qtd_aulas'] or not turma['horario']: continue
-            try:
-                dt_inicio = datetime.strptime(turma['data_inicio'], "%Y-%m-%d")
-                dia_alvo = DIAS_MAPA.get(turma['dia_semana'].split("-")[0].strip(), 0) 
-                dias_diff = (dia_alvo - dt_inicio.weekday() + 7) % 7
-                dt_atual = dt_inicio + timedelta(days=dias_diff)
-                hora_ini = turma['horario'].split("-")[0].strip()
-                nome_prof_t = turma['tb_colaboradores']['nome_completo'] if turma.get('tb_colaboradores') else "Sem Prof"
-
-                for i in range(turma['qtd_aulas']):
-                    eventos.append({
-                        "id": f"aula-{turma['codigo_turma']}-{i}",
-                        "title": f"📚 {turma['codigo_turma']} - {turma['nome_curso']} ({nome_prof_t})",
-                        "start": f"{dt_atual.strftime('%Y-%m-%d')}T{hora_ini}:00",
-                        "color": "#0088cc",
-                        "tipo": "aula"
-                    })
-                    dt_atual += timedelta(days=7)
-            except: continue
+        # ✅ REMOVIDO: eventos de "aula" das turmas (datas das turmas)
 
         return eventos
+
     except Exception as e:
-        print(f"Erro agenda: {e}") 
+        print(f"Erro agenda: {e}")
         return []
+
 
 
 @router.put("/reposicao-completa/{id_repo}")
