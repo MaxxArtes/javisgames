@@ -349,3 +349,101 @@ def obter_aula(id_aula: int, authorization: Optional[str] = Header(None)):
         print("ERRO obter_aula:", repr(e))
         raise HTTPException(status_code=500, detail=f"Erro interno obter_aula: {e}")
 
+from pydantic import BaseModel
+
+class PerfilUpdate(BaseModel):
+    nome_completo: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+
+class SenhaUpdate(BaseModel):
+    senha_atual: Optional[str] = None
+    senha_nova: str
+
+
+@router.get("/perfil")
+def get_perfil(authorization: Optional[str] = Header(None)):
+    token = _get_bearer_token(authorization)
+    user_id = _get_user_id_from_token(token)
+
+    # pega email do auth
+    try:
+        user = supabase.auth.get_user(token)
+        email = getattr(user.user, "email", None)
+    except Exception:
+        email = None
+
+    # pega dados do aluno (select * pra não quebrar se seu schema variar)
+    aluno_resp = (
+        supabase.table("tb_alunos")
+        .select("*")
+        .eq("user_id", user_id)
+        .limit(1)
+        .execute()
+    )
+    if not aluno_resp.data:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+
+    aluno = aluno_resp.data[0]
+    return {
+        "email": email,
+        "nome_completo": aluno.get("nome_completo") or "",
+        "telefone": aluno.get("telefone") or "",
+        # se você tiver mais colunas, pode expor aqui:
+        # "cpf": aluno.get("cpf") or "",
+        # "data_nascimento": aluno.get("data_nascimento") or "",
+    }
+
+
+@router.put("/perfil")
+def update_perfil(payload: PerfilUpdate, authorization: Optional[str] = Header(None)):
+    token = _get_bearer_token(authorization)
+    user_id = _get_user_id_from_token(token)
+
+    # 1) atualiza tabela tb_alunos (somente campos enviados)
+    update_data: Dict[str, Any] = {}
+    if payload.nome_completo is not None:
+        update_data["nome_completo"] = payload.nome_completo.strip()
+    if payload.telefone is not None:
+        update_data["telefone"] = payload.telefone.strip()
+
+    if update_data:
+        supabase.table("tb_alunos").update(update_data).eq("user_id", user_id).execute()
+
+    # 2) atualiza email no auth (se enviado)
+    if payload.email is not None and payload.email.strip():
+        try:
+            supabase.auth.admin.update_user_by_id(user_id, {"email": payload.email.strip()})
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Erro ao atualizar e-mail: {e}")
+
+    return {"ok": True}
+
+
+@router.put("/senha")
+def update_senha(payload: SenhaUpdate, authorization: Optional[str] = Header(None)):
+    token = _get_bearer_token(authorization)
+    user_id = _get_user_id_from_token(token)
+
+    # (opcional) valida senha atual
+    if payload.senha_atual:
+        try:
+            user = supabase.auth.get_user(token)
+            email = getattr(user.user, "email", None)
+            if not email:
+                raise HTTPException(status_code=400, detail="Email do usuário não encontrado para validar senha atual")
+
+            # tenta login com senha atual
+            supabase.auth.sign_in_with_password({"email": email, "password": payload.senha_atual})
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="Senha atual inválida")
+
+    # troca senha (admin)
+    try:
+        supabase.auth.admin.update_user_by_id(user_id, {"password": payload.senha_nova})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Erro ao atualizar senha: {e}")
+
+    return {"ok": True}
